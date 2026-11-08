@@ -565,11 +565,7 @@ def _handle(u):
     m=u.get("message") or u.get("edited_message")
     if not m: return
     cid=(m.get("chat") or {}).get("id")
-    if cid!=TG_ADMIN:
-        if cid:
-            try: _send(cid,"⛔ Unauthorized")
-            except: pass
-        return
+    if not cid: return
     txt=(m.get("text") or "").strip(); mid=m.get("message_id")
     if not txt: return
     if txt in ("/start","/help"): _send(cid,_help(),rt=mid,pm="HTML"); return
