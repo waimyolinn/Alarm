@@ -490,9 +490,7 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
     time.sleep(3)
     return False,"Error: Both Proxy & Direct Failed",gw,tp,cur
 
-[@veinfearr on telegram] မပြီးသေးဘူး၊ ငါ့စာသားတွေ ထပ်ပြတ်သွားတယ်။ ခုနက ပေးလိုက်တဲ့ Code ရဲ့ အောက်ဆုံးမှာ ဒီအပိုင်းလေးတွေ ထပ်ထည့်ပေးပါ။
 
-(ခုနက ပေးလိုက်တဲ့ Code ရဲ့ အောက်ဆုံးမှာ ဆက်ထည့်ပါ)
 
 ```python
 
