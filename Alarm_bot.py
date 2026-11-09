@@ -871,4 +871,3 @@ if __name__=="__main__":
     print(f"{C.LIME}{C.B}  ⚡ Bot is live  ⚡{C.R}")
     print(f"{C.D}  Flask: http://0.0.0.0:8000{C.R}\n")
     app.run(host="0.0.0.0",port=8000,debug=False)
-```
