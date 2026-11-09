@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.0{FINAL}{C.R}{C.D}  |  W2 + Auto-Retry{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.5{FINAL}{C.R}{C.D}  |  W2 + Auto-Retry{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
