@@ -40,7 +40,7 @@ TG_SEND_DELAY  = 0.05
 RESULT_DIR     = "./results"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
-TG_W           = 1          # 1 worker for strict order
+TG_W           = 2          # 1 worker for strict order
 
 # ---------- Proxies ----------
 # မင်းရဲ့ Private Proxy တွေ ဒီမှာ ထည့်ပါ (မရှိရင် အလွတ်ထားပါ)
