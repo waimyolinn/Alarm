@@ -1,5 +1,4 @@
 
-```python
 #!/usr/bin/env python3
 import asyncio, aiohttp, json, re, random, time, threading, os, base64, requests
 import queue as _q
