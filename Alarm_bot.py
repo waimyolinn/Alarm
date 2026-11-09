@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.5{FINAL}{C.R}{C.D}  |  W2 + Auto-Retry{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.5{C.R}{C.D}  |  W2 + Auto-Retry{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
@@ -433,7 +433,6 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
                 remove_dead_proxy(px)
                 return False,f"Token: {e}",gw,tp,cur
             
-            # Submit ပိုင်း
             params={'operationName':'SubmitForCompletion'}
             sv={'input':{
                 'sessionInput':{'sessionToken':sst},'queueToken':qt or '','discounts':{'lines':[],'acceptUnexpectedDiscounts':True},
