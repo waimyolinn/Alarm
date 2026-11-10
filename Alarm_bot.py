@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v4.0{C.R}{C.D}  |  W2 + AddProxy{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v5.0{C.R}{C.D}  |  W2 + AddProxy{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
@@ -44,10 +44,8 @@ TG_W           = 2          # total workers / lanes
 CARD_DELAY     = 2.0        # ကဒ်တစ်ခုနဲ့တစ်ခုကြား စောင့်ချိန် (စက္ကန့်)
 
 # ---------- Proxies ----------
-# Proxy တွေ အကုန်ဒီမှာ ထည့်ပါ (Public ရော Private ရော)
 RAW_PROXIES=[
-    "46.225.138.35:36759:l1lo6k6xsj:OetadXmeuu",
-    "172.93.105.208:43159:8u74d0ud33:nfRkcoqOel",
+    # မင်းရဲ့ Proxy တွေ ဒီမှာ ထည့်ထားပါ (သို့မဟုတ် Bot ကနေ /addproxy နဲ့ ထည့်နိုင်တယ်)
 ]
 WORKING=[]; _PI=0; _PLK=threading.Lock()
 
@@ -67,9 +65,18 @@ def validate_proxies(proxies_to_check):
         return 0, 0
     print(f"{C.CYN}{C.B}◆ Proxy Validation{C.R}  {C.D}({len(proxies_to_check)} proxies){C.R}\n")
     tot=len(proxies_to_check); w=[]; done=0; lk=threading.Lock()
+    
     def run(raw):
         nonlocal done
-        parts=raw.strip().split(":"); found=None
+        raw = raw.strip()
+        # user:pass@ip:port ကို ip:port:user:pass ပြောင်းတာ
+        if "@" in raw and ":" in raw.split("@")[0]:
+            creds, host = raw.split("@")
+            u, pw = creds.split(":")
+            ip, pt = host.split(":")
+            raw = f"{ip}:{pt}:{u}:{pw}"
+
+        parts=raw.split(":"); found=None
         if len(parts)==4:
             ip,pt,u,pw=parts
             for sch in ("http","socks5h","socks5"):
@@ -80,6 +87,7 @@ def validate_proxies(proxies_to_check):
             for sch in ("http","socks5h","socks5"):
                 url=f"{sch}://{ip}:{pt}"
                 if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
+                
         with lk:
             done+=1
             if found: w.append(found)
@@ -87,6 +95,7 @@ def validate_proxies(proxies_to_check):
             bar=f"{C.GRN}{'█'*pct}{C.D}{'░'*(30-pct)}{C.R}"
             s=f"{C.LIME}✓{C.R}" if found else f"{C.RED}✗{C.R}"
             print(f"\r  {bar}  {done:>2}/{tot}  {C.GOLD}ok={len(w)}{C.R}  {s}",end="",flush=True)
+            
     ts=[threading.Thread(target=run,args=(r,)) for r in proxies_to_check]
     [t.start() for t in ts]; [t.join() for t in ts]
     print()
@@ -557,6 +566,7 @@ def _help():
     return ("<b>🔥 Checker Bot</b>\n\n"
             "▸ <code>/check cc</code> or <code>/check cc site</code> — Shopify\n"
             "▸ <code>/bt cc</code> — Braintree\n"
+            "▸ <code>/addproxy ip:port:user:pass</code> — Proxy အသစ်ထည့်ရန်\n"
             "▸ multi-line / comma separated supported\n"
             "▸ <code>/queue</code> · <code>/status</code> · <code>/help</code>\n\n"
             "<b>Example:</b>\n"
